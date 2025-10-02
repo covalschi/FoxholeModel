@@ -1,0 +1,13 @@
+<Project>
+  <PropertyGroup>
+    <!-- Path to the CUE4Parse checkout; override with /p:CUE4_DIR=... -->
+    <CUE4_DIR>extern\CUE4Parse</CUE4_DIR>
+    <CUE4_CONV_DIR>$(CUE4_DIR)\CUE4Parse-Conversion</CUE4_CONV_DIR>
+    <!-- Suppress moderate-severity audit warnings (NU1902). Keep high/critical visible. -->
+    <NoWarn>$(NoWarn);NU1902</NoWarn>
+  </PropertyGroup>
+  <!-- Prefer precise suppression when supported by SDK (NuGet >= 6.11 / .NET SDK >= 8.0.400) -->
+  <ItemGroup>
+    <NuGetAuditSuppress Include="https://github.com/advisories/GHSA-rxmq-m78w-7wmc" />
+  </ItemGroup>
+</Project>

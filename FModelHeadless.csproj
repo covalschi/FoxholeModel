@@ -15,8 +15,8 @@
   </ItemGroup>
 
   <ItemGroup>
-    <ProjectReference Include="..\extern\CUE4Parse\CUE4Parse\CUE4Parse.csproj" />
-    <ProjectReference Include="..\extern\CUE4Parse\CUE4Parse-Conversion\CUE4Parse-Conversion.csproj" />
+    <ProjectReference Include="$(CUE4_DIR)\CUE4Parse\CUE4Parse.csproj" />
+    <ProjectReference Include="$(CUE4_CONV_DIR)\CUE4Parse-Conversion.csproj" />
   </ItemGroup>
 
   <ItemGroup>
@@ -28,6 +28,8 @@
   </ItemGroup>
 
   <ItemGroup>
+    <!-- Exclude vendored sources from this app's compilation -->
+    <Compile Remove="extern\**\*.cs" />
     <Compile Remove="SnooperPort\SnimGui.cs" />
     <Compile Remove="SnooperPort\Snooper.cs" />
   </ItemGroup>
