@@ -66,6 +66,7 @@ internal static class SceneResolver
             return list;
 
         var rootPath = rootResult.Asset?.GetPathName();
+        int? teamPref = ParseTeamPreference(rootSpec.Properties?.Team);
 
         foreach (var c in rootResult.Components)
         {
@@ -155,6 +156,39 @@ internal static class SceneResolver
                                 xform = smc.GetRelativeTransform();
                             }
                             break;
+                        default:
+                            // Handle custom components that behave like StaticMeshComponent (e.g., TeamFlagMeshComponent)
+                            try
+                            {
+                                var typeName = loaded.ExportType ?? string.Empty;
+                                if (typeName.IndexOf("FlagMeshComponent", StringComparison.OrdinalIgnoreCase) >= 0 ||
+                                    typeName.IndexOf("TeamFlagMeshComponent", StringComparison.OrdinalIgnoreCase) >= 0 ||
+                                    typeName.IndexOf("StaticMeshComponent", StringComparison.OrdinalIgnoreCase) >= 0)
+                                {
+                                    // Try common mesh fields in order of precedence
+                                    CUE4Parse.UE4.Assets.Exports.StaticMesh.UStaticMesh meshRef = null;
+                                    if (loaded.TryGetValue(out CUE4Parse.UE4.Objects.UObject.FPackageIndex smIdx2, "StaticMesh") && !smIdx2.IsNull)
+                                        meshRef = smIdx2.Load<CUE4Parse.UE4.Assets.Exports.StaticMesh.UStaticMesh>();
+                                    if (meshRef == null && teamPref == 0 && loaded.TryGetValue(out CUE4Parse.UE4.Objects.UObject.FPackageIndex t0, "Team0Mesh") && !t0.IsNull)
+                                        meshRef = t0.Load<CUE4Parse.UE4.Assets.Exports.StaticMesh.UStaticMesh>();
+                                    if (meshRef == null && teamPref == 1 && loaded.TryGetValue(out CUE4Parse.UE4.Objects.UObject.FPackageIndex t1, "Team1Mesh") && !t1.IsNull)
+                                        meshRef = t1.Load<CUE4Parse.UE4.Assets.Exports.StaticMesh.UStaticMesh>();
+                                    if (meshRef == null && loaded.TryGetValue(out CUE4Parse.UE4.Objects.UObject.FPackageIndex team0, "Team0Mesh") && !team0.IsNull)
+                                        meshRef = team0.Load<CUE4Parse.UE4.Assets.Exports.StaticMesh.UStaticMesh>();
+                                    if (meshRef == null && loaded.TryGetValue(out CUE4Parse.UE4.Objects.UObject.FPackageIndex team1, "Team1Mesh") && !team1.IsNull)
+                                        meshRef = team1.Load<CUE4Parse.UE4.Assets.Exports.StaticMesh.UStaticMesh>();
+
+                                    if (meshRef != null)
+                                    {
+                                        assetToAttach = meshRef;
+                                        overrides = ExtractOverrides(loaded);
+                                        // Compute world transform by walking AttachParent chain and optional socket
+                                        xform = ComputeWorldTransformFromComponent(provider, loaded, verbose);
+                                    }
+                                }
+                            }
+                            catch { }
+                            break;
                     }
 
                     if (assetToAttach == null)
@@ -174,6 +208,8 @@ internal static class SceneResolver
                             overrides = ExtractOverrides(comp);
                             if (comp is CUE4Parse.UE4.Assets.Exports.Component.USceneComponent sc)
                                 xform = sc.GetRelativeTransform();
+                            else
+                                xform = TryGetRelativeTransformFallback(comp);
                             if (verbose)
                             {
                                 var count = overrides?.Count ?? 0;
@@ -206,6 +242,70 @@ internal static class SceneResolver
                         Console.Error.WriteLine($"[resolver] failed to read default-object prop '{prop}': {ex.Message}");
                 }
             }
+        }
+
+        // Fallback pass: some blueprints expose the flag only as a component on the CDO,
+        // without a direct mesh property. Scan for any *FlagMeshComponent and attach it using
+        // its computed world transform.
+        if (def != null)
+        {
+            try
+            {
+                foreach (var prop in def.Properties)
+                {
+                    if (prop?.Tag is ObjectProperty objProp)
+                    {
+                        var child = objProp.Value?.Load<UObject>();
+                        if (child == null) continue;
+                        var typeName = child.ExportType ?? string.Empty;
+                        if (typeName.IndexOf("FlagMeshComponent", StringComparison.OrdinalIgnoreCase) < 0 &&
+                            typeName.IndexOf("TeamFlagMeshComponent", StringComparison.OrdinalIgnoreCase) < 0)
+                            continue;
+
+                        // Resolve mesh choice (Team0/Team1/StaticMesh)
+                        CUE4Parse.UE4.Assets.Exports.StaticMesh.UStaticMesh meshRef = null;
+                        try
+                        {
+                            if (child.TryGetValue(out CUE4Parse.UE4.Objects.UObject.FPackageIndex smIdx, "StaticMesh") && !smIdx.IsNull)
+                                meshRef = smIdx.Load<CUE4Parse.UE4.Assets.Exports.StaticMesh.UStaticMesh>();
+                            if (meshRef == null && child.TryGetValue(out CUE4Parse.UE4.Objects.UObject.FPackageIndex t0, "Team0Mesh") && !t0.IsNull)
+                                meshRef = t0.Load<CUE4Parse.UE4.Assets.Exports.StaticMesh.UStaticMesh>();
+                            if (meshRef == null && child.TryGetValue(out CUE4Parse.UE4.Objects.UObject.FPackageIndex t1, "Team1Mesh") && !t1.IsNull)
+                                meshRef = t1.Load<CUE4Parse.UE4.Assets.Exports.StaticMesh.UStaticMesh>();
+                        }
+                        catch { }
+
+                        if (meshRef == null) continue;
+
+                        var meshPath = string.Empty;
+                        try { meshPath = meshRef.GetPathName(); } catch { }
+
+                        // Deduplicate if we already added the same mesh path from earlier passes
+                        var already = list.Any(a =>
+                        {
+                            try { return a.Asset.GetPathName().Equals(meshPath, StringComparison.OrdinalIgnoreCase); }
+                            catch { return false; }
+                        });
+                        if (already) continue;
+
+                        var worldXform = ComputeWorldTransformFromComponent(provider, child, verbose);
+                        var overrides = ExtractOverrides(child);
+                        var attach = new ResolvedAttachmentDescriptor(
+                            AssetId: "FlagMeshComponent",
+                            Asset: meshRef,
+                            Transform: worldXform,
+                            Visual: visual,
+                            Stockpile: null,
+                            StockpileOptions: Array.Empty<(string, int)>(),
+                            Overlay: rootResult.Overlay,
+                            MaterialOverrides: overrides);
+                        list.Add(attach);
+                        if (verbose)
+                            Console.WriteLine($"[resolver] recovered flag component -> attachment {meshPath}");
+                    }
+                }
+            }
+            catch { }
         }
 
         static IReadOnlyList<UMaterialInterface>? ExtractOverrides(UObject component)
@@ -276,6 +376,23 @@ internal static class SceneResolver
                                 return true;
                             }
                         }
+                        else
+                        {
+                            // Generic fallback: look for a StaticMesh/Team0Mesh/Team1Mesh property referencing targetMesh
+                            try
+                            {
+                                if (child.TryGetValue(out CUE4Parse.UE4.Objects.UObject.FPackageIndex smIdx2, "StaticMesh") &&
+                                    !smIdx2.IsNull && ReferenceEquals(smIdx2.Load<UObject>(), targetMesh))
+                                { component = child; return true; }
+                                if (child.TryGetValue(out CUE4Parse.UE4.Objects.UObject.FPackageIndex t0, "Team0Mesh") &&
+                                    !t0.IsNull && ReferenceEquals(t0.Load<UObject>(), targetMesh))
+                                { component = child; return true; }
+                                if (child.TryGetValue(out CUE4Parse.UE4.Objects.UObject.FPackageIndex t1, "Team1Mesh") &&
+                                    !t1.IsNull && ReferenceEquals(t1.Load<UObject>(), targetMesh))
+                                { component = child; return true; }
+                            }
+                            catch { }
+                        }
                     }
                     else if (prop?.Tag is ArrayProperty arrProp)
                     {
@@ -320,6 +437,96 @@ internal static class SceneResolver
         return list;
     }
 
+    // Compose world transform by walking a component's AttachParent chain.
+    // Also applies socket offsets when a child specifies AttachSocketName on a mesh parent.
+    private static FTransform ComputeWorldTransformFromComponent(DefaultFileProvider provider, UObject component, bool verbose)
+    {
+        var world = TryGetRelativeTransformFallback(component);
+
+        // Track to prevent cycles
+        var seen = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+
+        UObject current = component;
+        for (int depth = 0; depth < 32; depth++)
+        {
+            try
+            {
+                // Find parent scene component
+                if (!current.TryGetValue(out CUE4Parse.UE4.Objects.UObject.FPackageIndex parentIdx, "AttachParent") || parentIdx.IsNull)
+                    break;
+                var parent = parentIdx.Load<UObject>();
+                if (parent == null)
+                    break;
+
+                var parentName = parent.Name ?? string.Empty;
+                if (!string.IsNullOrEmpty(parentName))
+                {
+                    if (!seen.Add(parentName))
+                        break;
+                }
+
+                // If the child defines an attach socket name, compose the socket transform first
+                string socketName = string.Empty;
+                try
+                {
+                    if (current.TryGetValue(out string socket, "AttachSocketName") && !string.IsNullOrWhiteSpace(socket))
+                        socketName = socket;
+                    else if (current.TryGetValue(out CUE4Parse.UE4.Objects.UObject.FName socketF, "AttachSocketName"))
+                        socketName = socketF.Text;
+                }
+                catch { }
+
+                if (!string.IsNullOrWhiteSpace(socketName))
+                {
+                    var parentMeshPath = TryGetMeshPathFromComponent(provider, parent, verbose);
+                    if (!string.IsNullOrEmpty(parentMeshPath) && TryGetParentSocketTransform(provider, parentMeshPath, socketName, verbose, out var socketXform))
+                    {
+                        world = world * socketXform;
+                    }
+                }
+
+                // Then compose the parent's local transform
+                var parentLocal = TryGetRelativeTransformFallback(parent);
+                world = world * parentLocal;
+
+                current = parent;
+            }
+            catch { break; }
+        }
+
+        return world;
+    }
+
+    private static string TryGetMeshPathFromComponent(DefaultFileProvider provider, UObject comp, bool verbose)
+    {
+        try
+        {
+            switch (comp)
+            {
+                case CUE4Parse.UE4.Assets.Exports.Component.StaticMesh.UStaticMeshComponent smc:
+                    var st = smc.GetLoadedStaticMesh();
+                    return st?.GetPathName() ?? string.Empty;
+                case CUE4Parse.UE4.Assets.Exports.Component.SkeletalMesh.USkeletalMeshComponent skc:
+                    var idx = skc.GetSkeletalMesh();
+                    if (!idx.IsNull)
+                    {
+                        var sk = idx.Load<CUE4Parse.UE4.Assets.Exports.SkeletalMesh.USkeletalMesh>();
+                        return sk?.GetPathName() ?? string.Empty;
+                    }
+                    break;
+                default:
+                    // Generic fallback fields
+                    if (comp.TryGetValue(out CUE4Parse.UE4.Objects.UObject.FPackageIndex smIdx, "StaticMesh") && !smIdx.IsNull)
+                        return smIdx.Load<CUE4Parse.UE4.Assets.Exports.StaticMesh.UStaticMesh>()?.GetPathName() ?? string.Empty;
+                    if (comp.TryGetValue(out CUE4Parse.UE4.Objects.UObject.FPackageIndex skIdx, "SkeletalMesh") && !skIdx.IsNull)
+                        return skIdx.Load<CUE4Parse.UE4.Assets.Exports.SkeletalMesh.USkeletalMesh>()?.GetPathName() ?? string.Empty;
+                    break;
+            }
+        }
+        catch { }
+        return string.Empty;
+    }
+
     private static bool KeepByFilters(BlueprintSceneBuilder.BlueprintComponent c, SceneFilters? filters, bool verbose)
     {
         if (filters == null) return true;
@@ -357,6 +564,31 @@ internal static class SceneResolver
                     return false;
         }
         return true;
+    }
+
+    private static FTransform TryGetRelativeTransformFallback(UObject obj)
+    {
+        var t = FTransform.Identity;
+        try
+        {
+            if (obj.TryGetValue(out CUE4Parse.UE4.Objects.Core.Math.FVector loc, "RelativeLocation"))
+                t.Translation = loc * FModel.Views.Snooper.Constants.SCALE_DOWN_RATIO;
+            if (obj.TryGetValue(out CUE4Parse.UE4.Objects.Core.Math.FRotator rot, "RelativeRotation"))
+                t.Rotation = rot.Quaternion();
+            if (obj.TryGetValue(out CUE4Parse.UE4.Objects.Core.Math.FVector scale, "RelativeScale3D"))
+                t.Scale3D = scale;
+        }
+        catch { }
+        return t;
+    }
+
+    private static int? ParseTeamPreference(string? team)
+    {
+        if (string.IsNullOrWhiteSpace(team)) return null;
+        var t = team.Trim().ToLowerInvariant();
+        if (t == "0" || t == "team0" || t == "colonial") return 0;
+        if (t == "1" || t == "team1" || t == "warden") return 1;
+        return null;
     }
 
     private static IReadOnlyList<ResolvedAttachmentDescriptor> ResolveAttachments(

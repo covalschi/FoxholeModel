@@ -42,9 +42,10 @@ internal sealed class HeadlessRenderWindow : GameWindow
 
     private Renderer _renderer = null!;
     private FramebufferObject _framebuffer = null!;
+    private readonly PostProcessSettings? _post;
     private bool _initialized;
 
-    public HeadlessRenderWindow(ResolvedRootAsset root, string outputPath, int width, int height, float pitchDeg, float yawDeg, float orbitRadius, bool verbose, bool transparent, IReadOnlyList<ResolvedAttachmentDescriptor> attachments, FModelHeadless.Cli.SceneFilters? filters)
+    public HeadlessRenderWindow(ResolvedRootAsset root, string outputPath, int width, int height, float pitchDeg, float yawDeg, float orbitRadius, bool verbose, bool transparent, IReadOnlyList<ResolvedAttachmentDescriptor> attachments, FModelHeadless.Cli.SceneFilters? filters, PostProcessSettings? post = null)
         : base(new GameWindowSettings { UpdateFrequency = 60 }, new NativeWindowSettings
         {
             ClientSize = new Vector2i(width, height),
@@ -69,6 +70,7 @@ internal sealed class HeadlessRenderWindow : GameWindow
         _transparent = transparent;
         _attachments = attachments ?? Array.Empty<ResolvedAttachmentDescriptor>();
         _filters = filters;
+        _post = post;
     }
 
     private void EnsureInitialized()
@@ -95,6 +97,21 @@ internal sealed class HeadlessRenderWindow : GameWindow
         _renderer.Color = VertexColor.Default;
 
         _framebuffer.Setup();
+        // Configure PP (if provided)
+        if (_post is { Enabled: true })
+        {
+            _framebuffer.ConfigurePostProcessing(true,
+                _post.VignetteEnabled ? _post.VignetteIntensity : 0f,
+                _post.GrainEnabled ? _post.GrainIntensity : 0f,
+                _post.ChromaticEnabled ? _post.ChromaticAmountPx : 0f,
+                _post.DirtEnabled ? _post.DirtIntensity : 0f,
+                new OpenTK.Mathematics.Vector3(_post.DirtTint.X, _post.DirtTint.Y, _post.DirtTint.Z),
+                _post.DirtTiling);
+            if (_verbose)
+            {
+                Console.WriteLine($"[post] enabled; vignette={_post.VignetteEnabled}:{_post.VignetteIntensity:F2} grain={_post.GrainEnabled}:{_post.GrainIntensity:F2} chromatic={_post.ChromaticEnabled}:{_post.ChromaticAmountPx:F2}px dirt={_post.DirtEnabled}:{_post.DirtIntensity:F2}");
+            }
+        }
         _renderer.Setup();
         _renderer.SetDebugSolidColor(false);
         _renderer.Load(CancellationToken.None, _asset, _lazyAsset);
@@ -541,7 +558,8 @@ internal sealed class HeadlessRenderWindow : GameWindow
         EnsureInitialized();
         Context.MakeCurrent();
 
-        GL.BindFramebuffer(FramebufferTarget.Framebuffer, 0);
+        // Render into MSAA framebuffer first to allow post-processing
+        _framebuffer.Bind();
         GL.Viewport(0, 0, _width, _height);
         GL.Clear(ClearBufferMask.ColorBufferBit | ClearBufferMask.DepthBufferBit | ClearBufferMask.StencilBufferBit);
 
@@ -550,6 +568,8 @@ internal sealed class HeadlessRenderWindow : GameWindow
         if (err != ErrorCode.NoError)
             Console.WriteLine($"[gl] error after render: {err}");
 
+        // Resolve MSAA and run post shader into default framebuffer (and ensure we can read from FBO)
+        _framebuffer.BindMsaa();
         SaveFrame();
         _renderer.Save();
         SwapBuffers();
@@ -558,9 +578,10 @@ internal sealed class HeadlessRenderWindow : GameWindow
 
     private void SaveFrame()
     {
+        // Stable readback: always read the resolved (pre‑PP) FBO.
         var pixels = new byte[_width * _height * 4];
-        GL.BindFramebuffer(FramebufferTarget.ReadFramebuffer, 0);
-        GL.ReadBuffer(ReadBufferMode.Back);
+        GL.BindFramebuffer(FramebufferTarget.ReadFramebuffer, _framebuffer.PostProcessingHandle);
+        GL.ReadBuffer(ReadBufferMode.ColorAttachment0);
         GL.ReadPixels(0, 0, _width, _height, PixelFormat.Bgra, PixelType.UnsignedByte, pixels);
 
         using var image = Image.LoadPixelData<Bgra32>(pixels, _width, _height);

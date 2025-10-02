@@ -113,6 +113,11 @@ public sealed class SceneAssetProperties
 
     [JsonPropertyName("stockpile")]
     public SceneStockpile? Stockpile { get; set; }
+
+    // Optional team selector for components that expose Team0Mesh/Team1Mesh
+    // Accepts: "0", "1", "team0", "team1", "colonial", "warden"
+    [JsonPropertyName("team")]
+    public string? Team { get; set; }
 }
 
 public sealed class SceneStockpile
@@ -152,4 +157,37 @@ public sealed class SceneRender
 {
     [JsonPropertyName("output")]
     public string? Output { get; set; }
+
+    [JsonPropertyName("postProcess")]
+    public ScenePostProcess? PostProcess { get; set; }
+}
+
+public sealed class ScenePostProcess
+{
+    // Enable/disable PP; if a known preset is selected, this toggles on automatically
+    [JsonPropertyName("enabled")]
+    public bool? Enabled { get; set; }
+
+    // Optional preset name: "foxhole"
+    [JsonPropertyName("preset")]
+    public string? Preset { get; set; }
+
+    // Individual controls (override preset values)
+    [JsonPropertyName("vignetteIntensity")]
+    public float? VignetteIntensity { get; set; }
+
+    [JsonPropertyName("grainIntensity")]
+    public float? GrainIntensity { get; set; }
+
+    [JsonPropertyName("chromaticAmountPx")]
+    public float? ChromaticAmountPx { get; set; }
+
+    [JsonPropertyName("dirtIntensity")]
+    public float? DirtIntensity { get; set; }
+
+    [JsonPropertyName("dirtTint")]
+    public float[]? DirtTint { get; set; } // [r,g,b]
+
+    [JsonPropertyName("dirtTiling")]
+    public float? DirtTiling { get; set; }
 }
