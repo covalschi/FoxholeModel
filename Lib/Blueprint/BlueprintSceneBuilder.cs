@@ -12,12 +12,14 @@ using CUE4Parse.UE4.Assets.Exports.StaticMesh;
 using CUE4Parse.UE4.Assets.Exports.Material;
 using CUE4Parse.UE4.Objects.Engine;
 using CUE4Parse.UE4.Objects.UObject;
+using CUE4Parse.UE4.Assets.Objects;
+using CUE4Parse.UE4.Assets;
 
 namespace FModelHeadless.Lib.Blueprint;
 
 public static class BlueprintSceneBuilder
 {
-    public record BlueprintComponent(string Name, UObject Asset, FTransform Transform, IReadOnlyList<UMaterialInterface>? Overrides);
+    public record BlueprintComponent(string Name, UObject Asset, FTransform Transform, IReadOnlyList<UMaterialInterface>? Overrides, IReadOnlyList<string>? Tags);
 
     public static IReadOnlyList<BlueprintComponent> Build(DefaultFileProvider provider, UBlueprintGeneratedClass blueprintClass, bool verbose = false)
     {
@@ -34,7 +36,97 @@ public static class BlueprintSceneBuilder
         {
             Console.Error.WriteLine($"[blueprint] {blueprintClass.Name}: no SimpleConstructionScript found.");
         }
+        // Include extra components coming from ICH and TemplateComponent exports
+        components.AddRange(BuildExtras(provider, blueprintClass, verbose));
         return components;
+    }
+
+    public static IReadOnlyList<BlueprintComponent> BuildExtras(DefaultFileProvider provider, UBlueprintGeneratedClass blueprintClass, bool verbose)
+    {
+        var list = new List<BlueprintComponent>();
+
+        // 1) InheritableComponentHandler Records
+        try
+        {
+            if (blueprintClass.TryGetValue(out FPackageIndex ichIdx, "InheritableComponentHandler") &&
+                ichIdx.TryLoad(out UObject ich) &&
+                ich.TryGetValue(out IPropertyHolder[] records, "Records") &&
+                records is { Length: > 0 })
+            {
+                foreach (var record in records)
+                {
+                    if (!record.TryGetValue(out FPackageIndex compIdx, "ComponentTemplate") || compIdx.IsNull)
+                        continue;
+                    var comp = compIdx.Load<UObject>();
+                    if (comp == null) continue;
+
+                    var world = ExtractRelativeTransform(comp);
+                    switch (comp)
+                    {
+                        case UStaticMeshComponent smc:
+                            if (verbose) Console.WriteLine($"[blueprint][ich] static '{smc.Name}'");
+                            AddStaticMesh(smc, comp.Name, world, list, verbose);
+                            break;
+                        case USkeletalMeshComponent skc:
+                            if (verbose) Console.WriteLine($"[blueprint][ich] skeletal '{skc.Name}'");
+                            AddSkeletalMesh(provider, skc, comp.Name, world, list, verbose);
+                            break;
+                    }
+                }
+            }
+        }
+        catch (Exception ex)
+        {
+            if (verbose) Console.Error.WriteLine($"[blueprint] ICH parse failed: {ex.Message}");
+        }
+
+        // 2) TemplateComponent exports with TemplateActor
+        try
+        {
+            var classPath = blueprintClass.GetPathName();
+            var norm = BlueprintResolver.NormalizeObjectPath(classPath);
+            var dot = norm.LastIndexOf('.');
+            var packagePath = dot > 0 ? norm[..dot] : norm;
+
+            if (provider.TryLoadPackage(packagePath, out var pkg) && pkg != null)
+            {
+                foreach (var lazy in pkg.ExportsLazy)
+                {
+                    var exp = lazy?.Value; if (exp == null) continue;
+                    if (!string.Equals(exp.ExportType, "TemplateComponent", StringComparison.OrdinalIgnoreCase))
+                        continue;
+
+                    var compWorld = ExtractRelativeTransform(exp);
+                    if (!exp.TryGetValue(out FPackageIndex childIdx, "TemplateActor") || childIdx.IsNull)
+                        continue;
+                    if (!childIdx.TryLoad(out UBlueprintGeneratedClass childBp))
+                        continue;
+
+                    if (verbose) Console.WriteLine($"[blueprint][template] {exp.Name} -> {childBp.Name}");
+                    var childComps = Build(provider, childBp, verbose);
+                    foreach (var c in childComps)
+                    {
+                        var combined = c.Transform * compWorld;
+                        if (verbose)
+                        {
+                            try
+                            {
+                                var ap = c.Asset.GetPathName();
+                                Console.WriteLine($"  [blueprint][template] + {ap}");
+                            }
+                            catch { }
+                        }
+                        list.Add(new BlueprintComponent($"{exp.Name}/{c.Name}", c.Asset, combined, c.Overrides, c.Tags));
+                    }
+                }
+            }
+        }
+        catch (Exception ex)
+        {
+            if (verbose) Console.Error.WriteLine($"[blueprint] TemplateComponent parse failed: {ex.Message}");
+        }
+
+        return list;
     }
 
     private static USimpleConstructionScript? LoadSimpleConstructionScript(UBlueprintGeneratedClass blueprintClass, bool verbose)
@@ -108,7 +200,7 @@ public static class BlueprintSceneBuilder
                     foreach (var c in childComps)
                     {
                         var combined = c.Transform * worldTransform;
-                        components.Add(new BlueprintComponent($"{name}/{c.Name}", c.Asset, combined, c.Overrides));
+                        components.Add(new BlueprintComponent($"{name}/{c.Name}", c.Asset, combined, c.Overrides, c.Tags));
                     }
                     return;
                 }
@@ -158,7 +250,8 @@ public static class BlueprintSceneBuilder
 
         NormalizeTransform(ref worldTransform);
         var overrides = LoadOverrides(component, verbose);
-        components.Add(new BlueprintComponent(name, mesh, worldTransform, overrides));
+        var tags = LoadTags(component);
+        components.Add(new BlueprintComponent(name, mesh, worldTransform, overrides, tags));
     }
 
     private static void AddInstancedStaticMesh(UInstancedStaticMeshComponent component, string name, FTransform worldTransform, List<BlueprintComponent> components, bool verbose)
@@ -176,7 +269,8 @@ public static class BlueprintSceneBuilder
         if (instances.Length == 0)
         {
             var overridesEmpty = LoadOverrides(component, verbose);
-            components.Add(new BlueprintComponent(name, mesh, worldTransform, overridesEmpty));
+            var tagsEmpty = LoadTags(component);
+            components.Add(new BlueprintComponent(name, mesh, worldTransform, overridesEmpty, tagsEmpty));
             return;
         }
 
@@ -187,7 +281,8 @@ public static class BlueprintSceneBuilder
             var combined = instanceTransform * worldTransform;
             NormalizeTransform(ref combined);
             var overrides = LoadOverrides(component, verbose);
-            components.Add(new BlueprintComponent($"{name}[{i}]", mesh, combined, overrides));
+            var tags = LoadTags(component);
+            components.Add(new BlueprintComponent($"{name}[{i}]", mesh, combined, overrides, tags));
         }
     }
 
@@ -211,7 +306,8 @@ public static class BlueprintSceneBuilder
 
         NormalizeTransform(ref worldTransform);
         var overrides = LoadOverrides(component, verbose);
-        components.Add(new BlueprintComponent(name, mesh, worldTransform, overrides));
+        var tags = LoadTags(component);
+        components.Add(new BlueprintComponent(name, mesh, worldTransform, overrides, tags));
     }
 
     private static string GetNodeName(USCS_Node node)
@@ -270,5 +366,31 @@ public static class BlueprintSceneBuilder
                 Console.Error.WriteLine($"[blueprint] failed to read OverrideMaterials: {ex.Message}");
         }
         return null;
+    }
+
+    private static IReadOnlyList<string>? LoadTags(UObject component)
+    {
+        try
+        {
+            if (component.TryGetValue(out string[] tags, "ComponentTags") && tags is { Length: > 0 })
+                return tags;
+        }
+        catch { }
+        return null;
+    }
+
+    private static FTransform ExtractRelativeTransform(UObject obj)
+    {
+        try
+        {
+            var loc = obj.GetOrDefault("RelativeLocation", FVector.ZeroVector);
+            var rot = obj.GetOrDefault("RelativeRotation", FRotator.ZeroRotator);
+            var sca = obj.GetOrDefault("RelativeScale3D", FVector.OneVector);
+            return new FTransform(rot.Quaternion(), loc, sca);
+        }
+        catch
+        {
+            return FTransform.Identity;
+        }
     }
 }

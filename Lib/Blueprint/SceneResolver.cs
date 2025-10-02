@@ -30,7 +30,7 @@ internal static class SceneResolver
         var rootSpec = rootCandidates[0];
         if (verbose)
             Console.WriteLine($"[resolver] root asset path='{rootSpec.Path}' metadata='{rootSpec.MetadataPath}'");
-        var (resolvedRoot, blueprintAttachments) = ResolveRoot(provider, rootSpec, verbose);
+        var (resolvedRoot, blueprintAttachments) = ResolveRoot(provider, rootSpec, scene.Filters, verbose);
         var attachments = new List<ResolvedAttachmentDescriptor>();
         if (blueprintAttachments.Count > 0)
             attachments.AddRange(blueprintAttachments);
@@ -42,14 +42,14 @@ internal static class SceneResolver
         return new ResolvedScene(resolvedRoot, attachments);
     }
 
-    private static (ResolvedRootAsset Root, IReadOnlyList<ResolvedAttachmentDescriptor> FromBlueprint) ResolveRoot(DefaultFileProvider provider, SceneAsset rootSpec, bool verbose)
+    private static (ResolvedRootAsset Root, IReadOnlyList<ResolvedAttachmentDescriptor> FromBlueprint) ResolveRoot(DefaultFileProvider provider, SceneAsset rootSpec, SceneFilters? filters, bool verbose)
     {
         var rootResult = BlueprintMeshResolver.ResolveRootMesh(provider, rootSpec, verbose);
         var visual = CreateVisualProperties(rootSpec, rootResult.Overlay, null, rootSpec.Properties?.ColorMaterialIndex);
 
         var root = new ResolvedRootAsset(rootResult.Asset, visual, rootResult.SourcePath, rootResult.MetadataPath, rootResult.Overlay);
 
-        var fromBlueprint = BuildAttachmentsFromComponents(rootResult, rootSpec, provider, visual, verbose);
+        var fromBlueprint = BuildAttachmentsFromComponents(rootResult, rootSpec, provider, visual, filters, verbose);
         return (root, fromBlueprint);
     }
 
@@ -58,6 +58,7 @@ internal static class SceneResolver
         SceneAsset rootSpec,
         DefaultFileProvider provider,
         AssetVisualProperties visual,
+        SceneFilters? filters,
         bool verbose)
     {
         var list = new List<ResolvedAttachmentDescriptor>();
@@ -65,24 +66,24 @@ internal static class SceneResolver
             return list;
 
         var rootPath = rootResult.Asset?.GetPathName();
-        var seen = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
 
         foreach (var c in rootResult.Components)
         {
+            if (!KeepByFilters(c, filters, verbose))
+                continue;
             if (c?.Asset == null)
                 continue;
 
             // Only static meshes are currently supported as attachments in the renderer.
-            var key = string.Empty;
-            try { key = c.Asset.GetPathName(); } catch { }
-            if (!string.IsNullOrEmpty(key))
+            // Avoid double-rendering the chosen primary asset itself, but allow multiple
+            // instances of the same mesh path (transforms differ around the fort walls).
+            try
             {
-                // Skip duplicate meshes and avoid double-rendering the chosen root asset.
-                if (!seen.Add(key))
-                    continue;
+                var key = c.Asset.GetPathName();
                 if (!string.IsNullOrEmpty(rootPath) && string.Equals(rootPath, key, StringComparison.OrdinalIgnoreCase))
                     continue;
             }
+            catch { }
 
             var transform = c.Transform;
 
@@ -183,7 +184,7 @@ internal static class SceneResolver
 
                     var path = string.Empty;
                     try { path = assetToAttach.GetPathName(); } catch { }
-                    if (!string.IsNullOrEmpty(path) && (!seen.Add(path) || (rootPath?.Equals(path, StringComparison.OrdinalIgnoreCase) ?? false)))
+                    if (!string.IsNullOrEmpty(path) && (rootPath?.Equals(path, StringComparison.OrdinalIgnoreCase) ?? false))
                         continue;
 
                     var attachment = new ResolvedAttachmentDescriptor(
@@ -319,6 +320,45 @@ internal static class SceneResolver
         return list;
     }
 
+    private static bool KeepByFilters(BlueprintSceneBuilder.BlueprintComponent c, SceneFilters? filters, bool verbose)
+    {
+        if (filters == null) return true;
+
+        string path = string.Empty;
+        try { path = c.Asset.GetPathName(); } catch { }
+        var tags = c.Tags != null ? new List<string>(c.Tags).ToArray() : Array.Empty<string>();
+
+        if (filters.IncludePathContains is { Length: > 0 })
+        {
+            var any = false;
+            foreach (var token in filters.IncludePathContains)
+                if (!string.IsNullOrWhiteSpace(token) && path.IndexOf(token, StringComparison.OrdinalIgnoreCase) >= 0)
+                { any = true; break; }
+            if (!any) return false;
+        }
+        if (filters.ExcludePathContains is { Length: > 0 })
+        {
+            foreach (var token in filters.ExcludePathContains)
+                if (!string.IsNullOrWhiteSpace(token) && path.IndexOf(token, StringComparison.OrdinalIgnoreCase) >= 0)
+                    return false;
+        }
+        if (filters.IncludeTags is { Length: > 0 })
+        {
+            var any = false;
+            foreach (var t in filters.IncludeTags)
+                if (!string.IsNullOrWhiteSpace(t) && Array.Exists<string>(tags, x => string.Equals(x, t, StringComparison.OrdinalIgnoreCase)))
+                { any = true; break; }
+            if (!any) return false;
+        }
+        if (filters.ExcludeTags is { Length: > 0 })
+        {
+            foreach (var t in filters.ExcludeTags)
+                if (!string.IsNullOrWhiteSpace(t) && Array.Exists<string>(tags, x => string.Equals(x, t, StringComparison.OrdinalIgnoreCase)))
+                    return false;
+        }
+        return true;
+    }
+
     private static IReadOnlyList<ResolvedAttachmentDescriptor> ResolveAttachments(
         DefaultFileProvider provider,
         SceneSpec scene,
@@ -342,6 +382,7 @@ internal static class SceneResolver
             var anchorName = attachRef.Anchor ?? "BaseMesh";
             var parentMetadataPath = parentSpec.MetadataPath ?? parentSpec.Path;
             var anchorTransform = FTransform.Identity;
+            var socketTransform = FTransform.Identity;
 
             if (!string.IsNullOrWhiteSpace(parentMetadataPath))
             {
@@ -356,10 +397,24 @@ internal static class SceneResolver
                 {
                     anchorTransform = anchor.BaseMeshTransform;
                 }
+
+                // Optional socket-based placement relative to parent
+                if (!string.IsNullOrWhiteSpace(attachRef.Socket))
+                {
+                    if (!TryGetParentSocketTransform(provider, parentMetadataPath, attachRef.Socket!, verbose, out socketTransform))
+                    {
+                        if (verbose)
+                            Console.Error.WriteLine($"[resolver] Socket '{attachRef.Socket}' not found on '{parentMetadataPath}'");
+                        socketTransform = FTransform.Identity;
+                    }
+                }
             }
 
             var offsetTransform = CreateOffsetTransform(attachRef.Offset);
-            var baseTransform = CombineTransforms(anchorTransform, offsetTransform);
+            var baseTransform = anchorTransform;
+            if (!string.IsNullOrWhiteSpace(attachRef.Socket))
+                baseTransform = CombineTransforms(baseTransform, socketTransform);
+            baseTransform = CombineTransforms(baseTransform, offsetTransform);
 
             var props = asset.Properties ?? new SceneAssetProperties();
             var meshResult = BlueprintMeshResolver.ResolveAttachmentMeshes(provider, asset, asset.MetadataPath ?? asset.Path, NormalizeHpState(props.HpState), props.ColorVariant, verbose);
@@ -470,6 +525,52 @@ internal static class SceneResolver
         var rotation = componentTransform.Rotation * baseTransform.Rotation;
         var scale = componentTransform.Scale3D;
         return new FTransform(rotation, translation, scale);
+    }
+
+    private static bool TryGetParentSocketTransform(DefaultFileProvider provider, string parentPath, string socketName, bool verbose, out FTransform transform)
+    {
+        transform = FTransform.Identity;
+        try
+        {
+            // Prefer skeletal sockets
+            if (TryLoadSkeletalMesh(provider, parentPath, verbose, out var skMesh) && skMesh?.Sockets is { Length: > 0 })
+            {
+                foreach (var socketRef in skMesh.Sockets)
+                {
+                    if (!socketRef.TryLoad(out CUE4Parse.UE4.Assets.Exports.SkeletalMesh.USkeletalMeshSocket socket) || socket == null)
+                        continue;
+                    if (string.Equals(socket.SocketName.Text, socketName, StringComparison.OrdinalIgnoreCase))
+                    {
+                        var rot = socket.RelativeRotation;
+                        transform = new FTransform(rot.Quaternion(), socket.RelativeLocation, CUE4Parse.UE4.Objects.Core.Math.FVector.OneVector);
+                        return true;
+                    }
+                }
+            }
+
+            // Static mesh sockets
+            if (TryLoadStaticMesh(provider, parentPath, verbose, out var stMesh) && stMesh?.Sockets is { Length: > 0 })
+            {
+                foreach (var socketRef in stMesh.Sockets)
+                {
+                    if (!socketRef.TryLoad(out CUE4Parse.UE4.Assets.Exports.StaticMesh.UStaticMeshSocket socket) || socket == null)
+                        continue;
+                    if (string.Equals(socket.SocketName.Text, socketName, StringComparison.OrdinalIgnoreCase))
+                    {
+                        // UStaticMeshSocket exposes RelativeLocation and often RelativeRotation
+                        var rot = socket.RelativeRotation;
+                        transform = new FTransform(rot.Quaternion(), socket.RelativeLocation, CUE4Parse.UE4.Objects.Core.Math.FVector.OneVector);
+                        return true;
+                    }
+                }
+            }
+        }
+        catch (Exception ex)
+        {
+            if (verbose)
+                Console.Error.WriteLine($"[resolver] Socket transform read failed on '{parentPath}': {ex.Message}");
+        }
+        return false;
     }
 
     private static bool TryLoadStaticMesh(DefaultFileProvider provider, string path, bool verbose, out UStaticMesh mesh)

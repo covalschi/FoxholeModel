@@ -37,13 +37,14 @@ internal sealed class HeadlessRenderWindow : GameWindow
     private readonly bool _verbose;
     private readonly bool _transparent;
     private readonly IReadOnlyList<ResolvedAttachmentDescriptor> _attachments;
+    private readonly FModelHeadless.Cli.SceneFilters? _filters;
     private readonly List<(Guid id, ResolvedAttachmentDescriptor descriptor)> _attachmentModels = new();
 
     private Renderer _renderer = null!;
     private FramebufferObject _framebuffer = null!;
     private bool _initialized;
 
-    public HeadlessRenderWindow(ResolvedRootAsset root, string outputPath, int width, int height, float pitchDeg, float yawDeg, float orbitRadius, bool verbose, bool transparent, IReadOnlyList<ResolvedAttachmentDescriptor> attachments)
+    public HeadlessRenderWindow(ResolvedRootAsset root, string outputPath, int width, int height, float pitchDeg, float yawDeg, float orbitRadius, bool verbose, bool transparent, IReadOnlyList<ResolvedAttachmentDescriptor> attachments, FModelHeadless.Cli.SceneFilters? filters)
         : base(new GameWindowSettings { UpdateFrequency = 60 }, new NativeWindowSettings
         {
             ClientSize = new Vector2i(width, height),
@@ -67,6 +68,7 @@ internal sealed class HeadlessRenderWindow : GameWindow
         _verbose = verbose;
         _transparent = transparent;
         _attachments = attachments ?? Array.Empty<ResolvedAttachmentDescriptor>();
+        _filters = filters;
     }
 
     private void EnsureInitialized()
@@ -107,11 +109,14 @@ internal sealed class HeadlessRenderWindow : GameWindow
         if (primaryModel != null)
         {
             ApplyVisualProperties(primaryModel, _root.Visual, _root.Overlay);
+            ApplyMaterialVisibility(primaryModel);
             primaryModel.IsVisible = true;
             foreach (var section in primaryModel.Sections)
             {
                 section.Show = true;
             }
+            // Re-apply filters after default visibility was set
+            ApplyMaterialVisibility(primaryModel);
             if (_verbose)
             {
                 Console.WriteLine($"[headless] root visual hp={_root.Visual.HpState} mud={_root.Visual.MudLevel:F2} snow={_root.Visual.SnowLevel:F2}");
@@ -286,6 +291,48 @@ internal sealed class HeadlessRenderWindow : GameWindow
                 continue;
 
             ApplyVisualProperties(model, request.Visual, request.Overlay);
+            ApplyMaterialVisibility(model);
+        }
+    }
+
+    private void ApplyMaterialVisibility(FModel.Views.Snooper.Models.UModel model)
+    {
+        if (_filters == null) return;
+        var showOnly = _filters.ShowMaterials;
+        var hide = _filters.HideMaterials;
+
+        bool Matches(string name, string path, string token)
+            => !string.IsNullOrWhiteSpace(token) &&
+               (name?.IndexOf(token, StringComparison.OrdinalIgnoreCase) >= 0 ||
+                path?.IndexOf(token, StringComparison.OrdinalIgnoreCase) >= 0);
+
+        for (var s = 0; s < model.Sections.Length; s++)
+        {
+            var sec = model.Sections[s];
+            var idx = sec.MaterialIndex;
+            if (idx < 0 || idx >= model.Materials.Length) continue;
+            var mat = model.Materials[idx];
+            var name = mat?.Name;
+            var path = mat?.Path;
+
+            if (showOnly is { Length: > 0 })
+            {
+                var any = false;
+                foreach (var t in showOnly)
+                {
+                    if (Matches(name, path, t)) { any = true; break; }
+                }
+                sec.Show = any;
+                continue;
+            }
+
+            if (hide is { Length: > 0 })
+            {
+                foreach (var t in hide)
+                {
+                    if (Matches(name, path, t)) { sec.Show = false; break; }
+                }
+            }
         }
     }
 

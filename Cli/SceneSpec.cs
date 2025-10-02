@@ -13,6 +13,9 @@ public sealed class SceneSpec
 
     [JsonPropertyName("render")]
     public SceneRender? Render { get; set; }
+
+    [JsonPropertyName("filters")]
+    public SceneFilters? Filters { get; set; }
 }
 
 public sealed class SceneAsset
@@ -44,8 +47,39 @@ public sealed class SceneAttachment
     [JsonPropertyName("anchor")]
     public string? Anchor { get; set; }
 
+    // Optional: attach to a named socket on the parent asset (USkeletalMeshSocket/UStaticMeshSocket)
+    [JsonPropertyName("socket")]
+    public string? Socket { get; set; }
+
     [JsonPropertyName("offset")]
     public SceneTransformOffset? Offset { get; set; }
+}
+
+public sealed class SceneFilters
+{
+    // Exclude components if their asset path contains any of these tokens
+    [JsonPropertyName("excludePathContains")]
+    public string[]? ExcludePathContains { get; set; }
+
+    // Include-only components whose asset path contains any of these tokens
+    [JsonPropertyName("includePathContains")]
+    public string[]? IncludePathContains { get; set; }
+
+    // Exclude components by ComponentTags
+    [JsonPropertyName("excludeTags")]
+    public string[]? ExcludeTags { get; set; }
+
+    // Include-only components by ComponentTags
+    [JsonPropertyName("includeTags")]
+    public string[]? IncludeTags { get; set; }
+
+    // Show only materials whose name/path contains any of these tokens
+    [JsonPropertyName("showMaterials")]
+    public string[]? ShowMaterials { get; set; }
+
+    // Hide materials whose name/path contains any of these tokens
+    [JsonPropertyName("hideMaterials")]
+    public string[]? HideMaterials { get; set; }
 }
 
 public sealed class SceneTransformOffset

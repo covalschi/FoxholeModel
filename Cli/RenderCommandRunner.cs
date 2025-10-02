@@ -24,7 +24,8 @@ internal static class RenderCommandRunner
         float OrbitRadius,
         float BaseYaw,
         bool Verbose,
-        bool TransparentBackground);
+        bool TransparentBackground,
+        SceneFilters? Filters);
 
     public static void RunScene(DefaultFileProvider provider, SceneSpec scene, DirectoryInfo outputDir, bool verbose)
     {
@@ -51,7 +52,7 @@ internal static class RenderCommandRunner
         }
 
         var resolvedScene = SceneResolver.Resolve(provider, scene, verbose);
-        var settings = new RenderSettings(width, height, angles, pitch, orbit, yaw, verbose, transparent);
+        var settings = new RenderSettings(width, height, angles, pitch, orbit, yaw, verbose, transparent, scene.Filters);
 
         RenderPrimaryAsset(resolvedScene, outputDir, settings);
     }
@@ -102,7 +103,7 @@ internal static class RenderCommandRunner
                 Console.WriteLine($"[render] View {i + 1}/{settings.AngleCount}: pitch={settings.PitchDegrees:F1} yaw={yaw:F1} orbit={(settings.OrbitRadius <= 0f ? "auto" : settings.OrbitRadius.ToString("F2"))} -> {pngPath}");
             }
 
-            using var window = new HeadlessRenderWindow(scene.Root, pngPath, settings.Width, settings.Height, settings.PitchDegrees, yaw, settings.OrbitRadius, settings.Verbose, settings.TransparentBackground, scene.Attachments);
+            using var window = new HeadlessRenderWindow(scene.Root, pngPath, settings.Width, settings.Height, settings.PitchDegrees, yaw, settings.OrbitRadius, settings.Verbose, settings.TransparentBackground, scene.Attachments, settings.Filters);
             window.RenderOnce();
         }
     }
