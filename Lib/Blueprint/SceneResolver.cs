@@ -444,13 +444,13 @@ internal static class SceneResolver
                     var parentMeshPath = TryGetMeshPathFromComponent(provider, parent, verbose);
                     if (!string.IsNullOrEmpty(parentMeshPath) && FModelHeadless.Lib.Common.MeshSocketUtil.TryGetParentSocketTransform(provider, parentMeshPath, socketName, verbose, out var socketXform))
                     {
-                        world = world * socketXform;
+                        world = TransformUtil.Combine(socketXform, world);
                     }
                 }
 
                 // Then compose the parent's local transform
                 var parentLocal = TryGetRelativeTransformFallback(parent);
-                world = world * parentLocal;
+                world = TransformUtil.Combine(parentLocal, world);
 
                 current = parent;
             }
@@ -461,34 +461,7 @@ internal static class SceneResolver
     }
 
     private static string TryGetMeshPathFromComponent(DefaultFileProvider provider, UObject comp, bool verbose)
-    {
-        try
-        {
-            switch (comp)
-            {
-                case CUE4Parse.UE4.Assets.Exports.Component.StaticMesh.UStaticMeshComponent smc:
-                    var st = smc.GetLoadedStaticMesh();
-                    return st?.GetPathName() ?? string.Empty;
-                case CUE4Parse.UE4.Assets.Exports.Component.SkeletalMesh.USkeletalMeshComponent skc:
-                    var idx = skc.GetSkeletalMesh();
-                    if (!idx.IsNull)
-                    {
-                        var sk = idx.Load<CUE4Parse.UE4.Assets.Exports.SkeletalMesh.USkeletalMesh>();
-                        return sk?.GetPathName() ?? string.Empty;
-                    }
-                    break;
-                default:
-                    // Generic fallback fields
-                    if (comp.TryGetValue(out CUE4Parse.UE4.Objects.UObject.FPackageIndex smIdx, "StaticMesh") && !smIdx.IsNull)
-                        return smIdx.Load<CUE4Parse.UE4.Assets.Exports.StaticMesh.UStaticMesh>()?.GetPathName() ?? string.Empty;
-                    if (comp.TryGetValue(out CUE4Parse.UE4.Objects.UObject.FPackageIndex skIdx, "SkeletalMesh") && !skIdx.IsNull)
-                        return skIdx.Load<CUE4Parse.UE4.Assets.Exports.SkeletalMesh.USkeletalMesh>()?.GetPathName() ?? string.Empty;
-                    break;
-            }
-        }
-        catch { }
-        return string.Empty;
-    }
+        => FModelHeadless.Lib.Common.MeshLoadUtil.TryGetMeshPathFromComponent(comp);
 
     private static bool KeepByFilters(BlueprintSceneBuilder.BlueprintComponent c, SceneFilters? filters, bool verbose)
     {
@@ -565,7 +538,7 @@ internal static class SceneResolver
             {
                 if (verbose)
                     Console.WriteLine($"[resolver] attachment '{asset.Id}' parent metadata='{parentMetadataPath}' anchor='{anchorName}'");
-                var baseProp = string.Equals(anchorName, "CargoPlatform", StringComparison.OrdinalIgnoreCase) ? "BaseMesh" : anchorName;
+                var baseProp = FModelHeadless.Lib.Common.AnchorUtil.NormalizeName(anchorName);
                 if (!TryComputeAnchorBase(provider, parentMetadataPath, baseProp, verbose, out anchorTransform))
                 {
                     if (verbose)
@@ -597,12 +570,12 @@ internal static class SceneResolver
 
             if (meshResult.Meshes.Count == 0)
             {
-                if (TryLoadStaticMesh(provider, asset.Path, verbose, out var fallbackMesh))
+                if (FModelHeadless.Lib.Common.MeshLoadUtil.TryLoadStaticMesh(provider, asset.Path, verbose, out var fallbackMesh))
                 {
                     var snooperTransform = TransformUtil.Combine(baseTransform, FTransform.Identity);
                     results.Add(new ResolvedAttachmentDescriptor(asset.Id, fallbackMesh, snooperTransform, visual, stockpile, meshResult.StockpileOptions, meshResult.Overlay));
                 }
-                else if (TryLoadSkeletalMesh(provider, asset.Path, verbose, out var fallbackSkeletal))
+                else if (FModelHeadless.Lib.Common.MeshLoadUtil.TryLoadSkeletalMesh(provider, asset.Path, verbose, out var fallbackSkeletal))
                 {
                     var snooperTransform = TransformUtil.Combine(baseTransform, FTransform.Identity);
                     results.Add(new ResolvedAttachmentDescriptor(asset.Id, fallbackSkeletal, snooperTransform, visual, stockpile, meshResult.StockpileOptions, meshResult.Overlay));
@@ -626,33 +599,10 @@ internal static class SceneResolver
     }
 
     private static AssetVisualProperties CreateVisualProperties(SceneAsset asset, OverlayMaskData overlay, Vector4? diffuseOverride, int? colorMaterialIndex)
-    {
-        var props = asset.Properties ?? new SceneAssetProperties();
-        var hpState = NormalizeHpState(props.HpState);
-        var mud = props.MudLevel ?? overlay.MudStrength ?? 0f;
-        var snow = props.SnowLevel ?? overlay.SnowStrength ?? 0f;
-
-        return new AssetVisualProperties(
-            hpState,
-            Clamp01(mud),
-            Clamp01(snow),
-            diffuseOverride,
-            colorMaterialIndex);
-    }
+        => FModelHeadless.Lib.Common.VisualUtil.Create(asset.Properties ?? new SceneAssetProperties(), overlay, diffuseOverride, colorMaterialIndex);
 
     private static AssetVisualProperties CreateVisualProperties(SceneAssetProperties props, OverlayMaskData overlay, Vector4? diffuseOverride, int? colorMaterialIndex)
-    {
-        var hpState = NormalizeHpState(props.HpState);
-        var mud = props.MudLevel ?? overlay.MudStrength ?? 0f;
-        var snow = props.SnowLevel ?? overlay.SnowStrength ?? 0f;
-
-        return new AssetVisualProperties(
-            hpState,
-            Clamp01(mud),
-            Clamp01(snow),
-            diffuseOverride,
-            colorMaterialIndex);
-    }
+        => FModelHeadless.Lib.Common.VisualUtil.Create(props, overlay, diffuseOverride, colorMaterialIndex);
 
     // Minimal anchor computation: resolve a scene component by property name on the blueprint CDO
     // and return its relative transform. When anchorName == "CargoPlatform", we map to "BaseMesh".

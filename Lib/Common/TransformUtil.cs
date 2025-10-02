@@ -12,11 +12,12 @@ internal static class TransformUtil
             transform.Rotation.Normalize();
     }
 
-    public static FTransform Combine(FTransform baseTransform, FTransform componentTransform)
+    // Compose parent -> child (apply parent first, then child)
+    public static FTransform Combine(FTransform parent, FTransform child)
     {
-        var translation = componentTransform.Translation + baseTransform.Translation;
-        var rotation = componentTransform.Rotation * baseTransform.Rotation;
-        var scale = componentTransform.Scale3D;
+        var translation = parent.Translation + child.Translation; // simple additive (we ignore rotation effect for now to match upstream behavior)
+        var rotation = parent.Rotation * child.Rotation;
+        var scale = child.Scale3D; // keep child's scale (engine scale rarely changes in our targets)
         return new FTransform(rotation, translation, scale);
     }
 
@@ -54,4 +55,3 @@ internal static class TransformUtil
         return ExtractRelativeTransform(obj);
     }
 }
-

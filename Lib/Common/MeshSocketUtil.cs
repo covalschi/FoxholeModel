@@ -15,7 +15,7 @@ internal static class MeshSocketUtil
         try
         {
             // Prefer skeletal sockets
-            var skLoaded = TryLoadSkeletal(provider, parentPath);
+            var skLoaded = MeshLoadUtil.TryLoadSkeletalMesh(provider, parentPath, verbose, out var skel) ? skel : null;
             if (skLoaded != null && skLoaded.Sockets is { Length: > 0 })
             {
                 foreach (var socketRef in skLoaded.Sockets)
@@ -30,7 +30,7 @@ internal static class MeshSocketUtil
                 }
             }
 
-            var stLoaded = TryLoadStatic(provider, parentPath);
+            var stLoaded = MeshLoadUtil.TryLoadStaticMesh(provider, parentPath, verbose, out var stat) ? stat : null;
             if (stLoaded != null && stLoaded.Sockets is { Length: > 0 })
             {
                 foreach (var socketRef in stLoaded.Sockets)
@@ -80,23 +80,5 @@ internal static class MeshSocketUtil
         }
     }
 
-    private static USkeletalMesh? TryLoadSkeletal(DefaultFileProvider provider, string path)
-    {
-        try
-        {
-            var normalized = FModelHeadless.Lib.Blueprint.BlueprintResolver.NormalizeObjectPath(path);
-            return provider.LoadPackageObject<USkeletalMesh>(normalized);
-        }
-        catch { return null; }
-    }
-
-    private static UStaticMesh? TryLoadStatic(DefaultFileProvider provider, string path)
-    {
-        try
-        {
-            return provider.LoadPackageObject<UStaticMesh>(path);
-        }
-        catch { return null; }
-    }
+    // Loading helpers moved to MeshLoadUtil
 }
-

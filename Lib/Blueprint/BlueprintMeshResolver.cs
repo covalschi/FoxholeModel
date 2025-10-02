@@ -17,6 +17,7 @@ using CUE4Parse.UE4.Objects.UObject;
 using FModelHeadless.Cli;
 // CargoPlatformAnalyzer removed; local base-mesh helpers used for anchor shortcuts
 using FModelHeadless.Lib.Variants;
+using FModelHeadless.Lib.Common;
 using FModelHeadless.Rendering;
 
 namespace FModelHeadless.Lib.Blueprint;
@@ -82,7 +83,7 @@ internal static class BlueprintMeshResolver
 
                 if (looksAux)
                 {
-                    var replacedFromAnchors = TryGetBaseMeshFromAnchors(provider, path, GetAnchorCandidates(), verbose, out var anchorMeshObj);
+                    var replacedFromAnchors = TryGetBaseMeshFromAnchors(provider, path, AnchorUtil.Candidates(), verbose, out var anchorMeshObj);
                     if (replacedFromAnchors && anchorMeshObj != null)
                         asset = anchorMeshObj;
 
@@ -104,7 +105,7 @@ internal static class BlueprintMeshResolver
                 asset = GuessVehicleMesh(provider, token, verbose);
 
                 if (asset == null)
-                    TryGetBaseMeshFromAnchors(provider, path, GetAnchorCandidates(), verbose, out asset);
+                    TryGetBaseMeshFromAnchors(provider, path, AnchorUtil.Candidates(), verbose, out asset);
             }
 
             if (asset == null)
@@ -219,40 +220,17 @@ internal static class BlueprintMeshResolver
         if (string.IsNullOrWhiteSpace(path))
             return null;
 
-        try
-        {
-            var skeletal = provider.LoadPackageObject<USkeletalMesh>(path);
-            if (skeletal != null)
-                return skeletal;
-        }
-        catch
-        {
-            // ignore, fall through
-        }
-
-        try
-        {
-            var staticMesh = provider.LoadPackageObject<UStaticMesh>(path);
-            if (staticMesh != null)
-                return staticMesh;
-        }
-        catch
-        {
-            // ignore
-        }
+        if (MeshLoadUtil.TryLoadSkeletalMesh(provider, path, verbose, out var sk))
+            return sk;
+        if (MeshLoadUtil.TryLoadStaticMesh(provider, path, verbose, out var st))
+            return st;
 
         if (verbose)
             Console.Error.WriteLine($"[resolver] Unable to load mesh directly from '{path}'.");
         return null;
     }
 
-    private static IEnumerable<string> GetAnchorCandidates()
-    {
-        yield return "BaseMesh";
-        yield return "VehicleMeshComponent";
-        yield return "VehicleMesh";
-        yield return "MeshComponent";
-    }
+    // Anchor candidates centralized in AnchorUtil
 
     private static BlueprintSceneBuilder.BlueprintComponent? SelectPrimaryMeshFromComponents(
         IReadOnlyList<BlueprintSceneBuilder.BlueprintComponent> components,
@@ -803,47 +781,5 @@ internal static class BlueprintMeshResolver
         }
     }
 
-    private static bool TryLoadStaticMesh(DefaultFileProvider provider, string path, bool verbose, out UStaticMesh mesh)
-    {
-        mesh = null!;
-        foreach (var candidate in ExpandMeshCandidates(path))
-        {
-            if (string.IsNullOrWhiteSpace(candidate))
-                continue;
-
-            try
-            {
-                var loaded = provider.LoadPackageObject<UObject>(candidate);
-                if (loaded is UStaticMesh staticMesh)
-                {
-                    mesh = staticMesh;
-                    return true;
-                }
-            }
-            catch
-            {
-                if (verbose)
-                    Console.Error.WriteLine($"[resolver] Failed to load static mesh '{candidate}'.");
-            }
-        }
-
-        return false;
-    }
-
-    private static IEnumerable<string> ExpandMeshCandidates(string rawPath)
-    {
-        var normalized = BlueprintResolver.NormalizeObjectPath(rawPath);
-        if (string.IsNullOrWhiteSpace(normalized))
-            yield break;
-
-        yield return normalized;
-
-        if (!normalized.Contains('.'))
-        {
-            var slash = normalized.LastIndexOf('/');
-            var baseName = slash >= 0 ? normalized[(slash + 1)..] : normalized;
-            if (!string.IsNullOrEmpty(baseName))
-                yield return $"{normalized}.{baseName}";
-        }
-    }
+    // Static mesh candidate expansion moved to MeshLoadUtil
 }
