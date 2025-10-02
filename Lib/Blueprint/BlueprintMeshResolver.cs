@@ -29,7 +29,9 @@ internal static class BlueprintMeshResolver
         UObject Asset,
         OverlayMaskData Overlay,
         string SourcePath,
-        string? MetadataPath);
+        string? MetadataPath,
+        IReadOnlyList<BlueprintSceneBuilder.BlueprintComponent> Components,
+        UObject? DefaultObject);
 
     internal sealed record AttachmentMeshResult(
         List<AttachmentMeshInfo> Meshes,
@@ -42,10 +44,12 @@ internal static class BlueprintMeshResolver
         var path = root.Path;
         var asset = TryLoadMesh(provider, path, verbose);
         var overlay = OverlayMaskData.Empty;
+        var scsComponents = Array.Empty<BlueprintSceneBuilder.BlueprintComponent>();
 
+        UObject? defaultObject = null;
         if (asset == null && BlueprintResolver.TryFind(provider, path, verbose, out var blueprint, out var resolvedPath))
         {
-            var defaultObject = blueprint.ClassDefaultObject.Load<UObject>();
+            defaultObject = blueprint.ClassDefaultObject.Load<UObject>();
             overlay = ExtractOverlayData(provider, defaultObject, verbose);
 
             if (verbose && defaultObject != null)
@@ -61,6 +65,7 @@ internal static class BlueprintMeshResolver
             }
 
             var components = BlueprintSceneBuilder.Build(provider, blueprint, verbose);
+            scsComponents = components.ToArray();
             asset = SelectPrimaryMeshFromComponents(components, root.Path, root.MetadataPath, verbose)?.Asset
                     ?? (TryGetSkeletalMeshFromDefault(defaultObject, verbose) as UObject)
                     ?? (TryGetFirstStaticMesh(provider, defaultObject, verbose) as UObject);
@@ -146,7 +151,7 @@ internal static class BlueprintMeshResolver
             throw new InvalidOperationException($"Unable to resolve root asset '{path}'.");
 
         var sourcePath = asset.GetPathName();
-        return new RootMeshResult(asset, overlay, sourcePath, root.MetadataPath ?? root.Path);
+        return new RootMeshResult(asset, overlay, sourcePath, root.MetadataPath ?? root.Path, scsComponents, defaultObject);
     }
 
     private static UObject? GuessVehicleMesh(DefaultFileProvider provider, string? token, bool verbose)

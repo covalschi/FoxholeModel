@@ -11,12 +11,11 @@ namespace FModelHeadless.Cli;
 
 internal static class ProviderFactory
 {
-    public static DefaultFileProvider Create(DirectoryInfo pakDir, FileInfo? mapping, string? aesKey, string gameVersion, bool verbose)
+    public static DefaultFileProvider Create(DirectoryInfo? pakDir, FileInfo? mapping, string? aesKey, string gameVersion, bool verbose)
     {
-        if (!pakDir.Exists)
-        {
-            throw new DirectoryNotFoundException($"Pak directory '{pakDir.FullName}' does not exist.");
-        }
+        pakDir ??= ResolveDefaultPakDir();
+        if (pakDir == null || !pakDir.Exists)
+            throw new DirectoryNotFoundException($"Pak directory not provided and default could not be found. Searched: {string.Join(", ", DefaultPakCandidates())}");
 
         var version = new VersionContainer(ParseGameVersion(gameVersion));
         var provider = new DefaultFileProvider(pakDir.FullName, SearchOption.AllDirectories, version);
@@ -48,6 +47,40 @@ internal static class ProviderFactory
         }
 
         return provider;
+    }
+
+    public static DirectoryInfo? ResolveDefaultPakDir()
+    {
+        foreach (var candidate in DefaultPakCandidates())
+        {
+            try
+            {
+                if (Directory.Exists(candidate))
+                    return new DirectoryInfo(candidate);
+            }
+            catch
+            {
+                // ignore path errors
+            }
+        }
+        return null;
+    }
+
+    private static IEnumerable<string> DefaultPakCandidates()
+    {
+        // Preferred Windows install locations (current)
+        yield return @"C:\\Program Files (x86)\\Steam\\steamapps\\common\\Foxhole\\War\\Content\\Paks";
+        yield return @"C:\\Program Files\\Steam\\steamapps\\common\\Foxhole\\War\\Content\\Paks";
+
+        // WSL/Linux mirrors of the above
+        yield return @"/mnt/c/Program Files (x86)/Steam/steamapps/common/Foxhole/War/Content/Paks";
+        yield return @"/mnt/c/Program Files/Steam/steamapps/common/Foxhole/War/Content/Paks";
+
+        // Legacy locations kept as fallbacks
+        yield return @"C:\\Program Files (x86)\\Steam\\steamapps\\common\\Foxhole\\Foxhole\\Content\\Paks";
+        yield return @"C:\\Program Files\\Steam\\steamapps\\common\\Foxhole\\Foxhole\\Content\\Paks";
+        yield return @"/mnt/c/Program Files (x86)/Steam/steamapps/common/Foxhole/Foxhole/Content/Paks";
+        yield return @"/mnt/c/Program Files/Steam/steamapps/common/Foxhole/Foxhole/Content/Paks";
     }
 
     private static EGame ParseGameVersion(string tag)

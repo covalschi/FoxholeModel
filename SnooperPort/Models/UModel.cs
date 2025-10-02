@@ -266,7 +266,7 @@ public abstract class UModel : IRenderableModel
 
         if (!outline)
         {
-            shader.SetUniform("uUvCount", UvCount);
+            shader.SetUniform("UvCount", UvCount);
             shader.SetUniform("uOpacity", ShowCollisions && IsSelected ? 0.75f : 1f);
             shader.SetUniform("uHasVertexColors", HasVertexColors);
         }

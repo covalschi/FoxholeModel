@@ -8,7 +8,7 @@ namespace FModelHeadless.Cli;
 
 internal static class RenderCommandFactory
 {
-    public static Command Create(Option<DirectoryInfo> pakDirOption, Option<FileInfo?> mappingOption, Option<string?> aesOption, Option<string> gameOption, Option<bool> verboseOption)
+    public static Command Create(Option<DirectoryInfo?> pakDirOption, Option<FileInfo?> mappingOption, Option<string?> aesOption, Option<string> gameOption, Option<bool> verboseOption)
     {
         var sceneOption = new Option<FileInfo>("--scene", "Path to scene JSON specification")
         {
@@ -25,7 +25,7 @@ internal static class RenderCommandFactory
         {
             var parse = context.ParseResult;
 
-            var pakDir = parse.GetValueForOption(pakDirOption)!;
+            var pakDir = parse.GetValueForOption(pakDirOption);
             var mapping = parse.GetValueForOption(mappingOption);
             var aesKey = parse.GetValueForOption(aesOption);
             var gameTag = parse.GetValueForOption(gameOption)!;

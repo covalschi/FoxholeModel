@@ -202,18 +202,51 @@ internal sealed class HeadlessRenderWindow : GameWindow
 
         foreach (var attachment in _attachments)
         {
-            if (!attachment.Mesh.TryConvert(out var converted))
+            UModel model = null;
+            var transform = ToSnooperTransform(attachment.Transform);
+            switch (attachment.Asset)
             {
-                if (_verbose)
-                    Console.Error.WriteLine($"[headless] failed to convert mesh for attachment '{attachment.AssetId}'.");
-                continue;
+                case CUE4Parse.UE4.Assets.Exports.StaticMesh.UStaticMesh sm:
+                    if (!sm.TryConvert(out var staticConverted))
+                    {
+                        if (_verbose)
+                            Console.Error.WriteLine($"[headless] failed to convert static mesh for attachment '{attachment.AssetId}'.");
+                        continue;
+                    }
+                    model = new StaticModel(sm, staticConverted, transform) { IsProp = true };
+                    break;
+                case CUE4Parse.UE4.Assets.Exports.SkeletalMesh.USkeletalMesh sk:
+                    if (!sk.TryConvert(out var skelConverted))
+                    {
+                        if (_verbose)
+                            Console.Error.WriteLine($"[headless] failed to convert skeletal mesh for attachment '{attachment.AssetId}'.");
+                        continue;
+                    }
+                    model = new SkeletalModel(sk, skelConverted, transform) { IsProp = true };
+                    break;
+                default:
+                    if (_verbose)
+                        Console.Error.WriteLine($"[headless] unsupported attachment asset type '{attachment.Asset?.ExportType}' for '{attachment.AssetId}'.");
+                    continue;
             }
 
-            var transform = ToSnooperTransform(attachment.Transform);
-            var model = new StaticModel(attachment.Mesh, converted, transform)
+            // Apply component-level material overrides if present, mapped by section->material index
+            if (attachment.MaterialOverrides != null && model != null && model.Materials != null && model.Sections != null && model.Sections.Length > 0)
             {
-                IsProp = true
-            };
+                for (var s = 0; s < model.Sections.Length; s++)
+                {
+                    var matIndex = model.Sections[s].MaterialIndex;
+                    if (matIndex < 0 || matIndex >= model.Materials.Length || matIndex >= attachment.MaterialOverrides.Count)
+                        continue;
+                    var overrideMat = attachment.MaterialOverrides[matIndex];
+                    if (overrideMat == null || model.Materials[matIndex] == null) continue;
+                    model.Materials[matIndex].SwapMaterial(overrideMat);
+                    if (_verbose)
+                    {
+                        try { Console.WriteLine($"[override] {model.Name} section={s} matIndex={matIndex} -> {overrideMat.Name}"); } catch { }
+                    }
+                }
+            }
 
             model.IsVisible = true;
             foreach (var section in model.Sections)
@@ -227,7 +260,14 @@ internal sealed class HeadlessRenderWindow : GameWindow
 
             if (_verbose)
             {
-                Console.WriteLine($"[headless] attachment {attachment.Mesh.GetPathName()} hp={attachment.Visual.HpState} mud={attachment.Visual.MudLevel:F2} snow={attachment.Visual.SnowLevel:F2}");
+                try
+                {
+                    Console.WriteLine($"[headless] attachment {attachment.Asset.GetPathName()} hp={attachment.Visual.HpState} mud={attachment.Visual.MudLevel:F2} snow={attachment.Visual.SnowLevel:F2}");
+                }
+                catch
+                {
+                    Console.WriteLine($"[headless] attachment <unknown-path> hp={attachment.Visual.HpState} mud={attachment.Visual.MudLevel:F2} snow={attachment.Visual.SnowLevel:F2}");
+                }
                 if (attachment.StockpileOptions.Count > 0)
                 {
                     foreach (var (itemPath, quantity) in attachment.StockpileOptions)

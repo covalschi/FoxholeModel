@@ -6,6 +6,7 @@ using CUE4Parse.UE4.Assets.Exports.Material;
 using CUE4Parse.UE4.Assets.Exports.Texture;
 using CUE4Parse.UE4.Objects.Core.Math;
 using CUE4Parse.UE4.Objects.Core.Misc;
+using CUE4Parse.UE4.Objects.UObject;
 using FModel.Settings;
 using FModel.Views.Snooper.Models;
 using OpenTK.Graphics.OpenGL4;
@@ -76,16 +77,23 @@ public class Material : IDisposable
         SwapMaterial(unrealMaterial);
     }
 
+    private UMaterialInterface _unrealMaterial;
+
     public void SwapMaterial(UMaterialInterface unrealMaterial)
     {
         Name = unrealMaterial.Name;
         Path = unrealMaterial.GetPathName();
+        _unrealMaterial = unrealMaterial;
         unrealMaterial.GetParams(Parameters, UserSettings.Default.MaterialExportFormat);
     }
 
     public void Setup(Options options, int uvCount)
     {
         _handle = GL.CreateProgram();
+
+        // Before deciding on fallback 1x1 textures, climb parent MICs and merge any inherited
+        // texture parameter bindings so Parameters.IsNull reflects inherited content.
+        TryInheritTexturesFromParents();
 
         if (uvCount < 1 || Parameters.IsNull)
         {
@@ -190,6 +198,39 @@ public class Material : IDisposable
             }
 
             HasSpecularMask = SpecularMasks.Any(tex => tex != null);
+        }
+    }
+
+    private void TryInheritTexturesFromParents()
+    {
+        if (_unrealMaterial == null)
+            return;
+
+        // If we already have texture parameters bound, we can still merge parents for missing keys
+
+        // Walk up the parent chain for MICs, copying any missing texture bindings
+        var guard = 0;
+        CUE4Parse.UE4.Assets.Exports.UObject current = _unrealMaterial;
+        while (current is UMaterialInstanceConstant mic && guard++ < 4)
+        {
+            if (!mic.TryGetValue(out FPackageIndex parentIdx, "Parent") || parentIdx.IsNull)
+                break;
+
+            var parent = parentIdx.Load<UMaterialInterface>();
+            if (parent == null)
+                break;
+
+            var parentParams = new CMaterialParams2();
+            parent.GetParams(parentParams, UserSettings.Default.MaterialExportFormat);
+
+            // Merge all texture parameter entries from the parent if missing locally
+            foreach (var kv in parentParams.Textures)
+            {
+                if (!Parameters.Textures.ContainsKey(kv.Key))
+                    Parameters.Textures[kv.Key] = kv.Value;
+            }
+
+            current = parent;
         }
     }
 

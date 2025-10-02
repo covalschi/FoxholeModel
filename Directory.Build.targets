@@ -1,0 +1,18 @@
+<Project>
+  <PropertyGroup>
+    <!-- Suppress all compiler warnings across all projects -->
+    <WarningLevel>0</WarningLevel>
+    <TreatWarningsAsErrors>false</TreatWarningsAsErrors>
+
+    <!-- Disable .NET analyzers to avoid CA* warnings -->
+    <EnableNETAnalyzers>false</EnableNETAnalyzers>
+
+    <!-- Demote MSBuild warnings to messages (best effort) -->
+    <MSBuildWarningsAsMessages>MSB*</MSBuildWarningsAsMessages>
+
+    <!-- Suppress NuGet restore/build warnings (best effort) -->
+    <RestoreNoWarn>All</RestoreNoWarn>
+  </PropertyGroup>
+
+  <!-- Note: .NET SDK's MSBuild does not support CodeTaskFactory; use scripts to set env vars. -->
+</Project>

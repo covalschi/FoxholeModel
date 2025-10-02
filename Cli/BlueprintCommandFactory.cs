@@ -7,7 +7,7 @@ namespace FModelHeadless.Cli;
 
 internal static class BlueprintCommandFactory
 {
-    public static Command Create(Option<DirectoryInfo> pakDirOption, Option<FileInfo?> mappingOption, Option<string?> aesOption, Option<string> gameOption, Option<bool> verboseOption)
+    public static Command Create(Option<DirectoryInfo?> pakDirOption, Option<FileInfo?> mappingOption, Option<string?> aesOption, Option<string> gameOption, Option<bool> verboseOption)
     {
         var root = new Command("blueprint", "Blueprint exploration helpers");
 
@@ -18,7 +18,7 @@ internal static class BlueprintCommandFactory
 
         var componentsCommand = new Command("components", "List component meshes referenced by the blueprint");
         componentsCommand.AddOption(pathOption);
-        componentsCommand.SetHandler((DirectoryInfo pakDir, FileInfo? mapping, string? aes, string gameTag, bool verbose, string blueprintPath) =>
+        componentsCommand.SetHandler((DirectoryInfo? pakDir, FileInfo? mapping, string? aes, string gameTag, bool verbose, string blueprintPath) =>
         {
             withProvider(pakDir, mapping, aes, gameTag, verbose, provider =>
             {
@@ -43,7 +43,7 @@ internal static class BlueprintCommandFactory
 
         var graphCommand = new Command("graph", "Enumerate unique asset dependencies referenced by the blueprint");
         graphCommand.AddOption(pathOption);
-        graphCommand.SetHandler((DirectoryInfo pakDir, FileInfo? mapping, string? aes, string gameTag, bool verbose, string blueprintPath) =>
+        graphCommand.SetHandler((DirectoryInfo? pakDir, FileInfo? mapping, string? aes, string gameTag, bool verbose, string blueprintPath) =>
         {
             withProvider(pakDir, mapping, aes, gameTag, verbose, provider =>
             {
@@ -69,7 +69,7 @@ internal static class BlueprintCommandFactory
 
         return root;
 
-        static void withProvider(DirectoryInfo pakDir, FileInfo? mapping, string? aesKey, string gameTag, bool verbose, Action<CUE4Parse.FileProvider.DefaultFileProvider> action)
+        static void withProvider(DirectoryInfo? pakDir, FileInfo? mapping, string? aesKey, string gameTag, bool verbose, Action<CUE4Parse.FileProvider.DefaultFileProvider> action)
         {
             try
             {

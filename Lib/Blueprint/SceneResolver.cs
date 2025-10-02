@@ -4,6 +4,10 @@ using System.Linq;
 using System.Numerics;
 using CUE4Parse.FileProvider;
 using CUE4Parse.UE4.Assets.Exports.StaticMesh;
+using CUE4Parse.UE4.Assets.Exports;
+using CUE4Parse.UE4.Assets.Exports.Material;
+using CUE4Parse.UE4.Assets.Objects.Properties;
+using CUE4Parse.UE4.Objects.UObject;
 using CUE4Parse.UE4.Objects.Core.Math;
 using FModelHeadless.Cli;
 using FModelHeadless.Lib.Cargo;
@@ -26,17 +30,293 @@ internal static class SceneResolver
         var rootSpec = rootCandidates[0];
         if (verbose)
             Console.WriteLine($"[resolver] root asset path='{rootSpec.Path}' metadata='{rootSpec.MetadataPath}'");
-        var resolvedRoot = ResolveRoot(provider, rootSpec, verbose);
-        var attachments = ResolveAttachments(provider, scene, assetsById, verbose);
+        var (resolvedRoot, blueprintAttachments) = ResolveRoot(provider, rootSpec, verbose);
+        var attachments = new List<ResolvedAttachmentDescriptor>();
+        if (blueprintAttachments.Count > 0)
+            attachments.AddRange(blueprintAttachments);
+
+        var explicitAttachments = ResolveAttachments(provider, scene, assetsById, verbose);
+        if (explicitAttachments.Count > 0)
+            attachments.AddRange(explicitAttachments);
 
         return new ResolvedScene(resolvedRoot, attachments);
     }
 
-    private static ResolvedRootAsset ResolveRoot(DefaultFileProvider provider, SceneAsset rootSpec, bool verbose)
+    private static (ResolvedRootAsset Root, IReadOnlyList<ResolvedAttachmentDescriptor> FromBlueprint) ResolveRoot(DefaultFileProvider provider, SceneAsset rootSpec, bool verbose)
     {
         var rootResult = BlueprintMeshResolver.ResolveRootMesh(provider, rootSpec, verbose);
         var visual = CreateVisualProperties(rootSpec, rootResult.Overlay, null, rootSpec.Properties?.ColorMaterialIndex);
-        return new ResolvedRootAsset(rootResult.Asset, visual, rootResult.SourcePath, rootResult.MetadataPath, rootResult.Overlay);
+
+        var root = new ResolvedRootAsset(rootResult.Asset, visual, rootResult.SourcePath, rootResult.MetadataPath, rootResult.Overlay);
+
+        var fromBlueprint = BuildAttachmentsFromComponents(rootResult, rootSpec, provider, visual, verbose);
+        return (root, fromBlueprint);
+    }
+
+    private static IReadOnlyList<ResolvedAttachmentDescriptor> BuildAttachmentsFromComponents(
+        BlueprintMeshResolver.RootMeshResult rootResult,
+        SceneAsset rootSpec,
+        DefaultFileProvider provider,
+        AssetVisualProperties visual,
+        bool verbose)
+    {
+        var list = new List<ResolvedAttachmentDescriptor>();
+        if (rootResult.Components == null || rootResult.Components.Count == 0)
+            return list;
+
+        var rootPath = rootResult.Asset?.GetPathName();
+        var seen = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+
+        foreach (var c in rootResult.Components)
+        {
+            if (c?.Asset == null)
+                continue;
+
+            // Only static meshes are currently supported as attachments in the renderer.
+            var key = string.Empty;
+            try { key = c.Asset.GetPathName(); } catch { }
+            if (!string.IsNullOrEmpty(key))
+            {
+                // Skip duplicate meshes and avoid double-rendering the chosen root asset.
+                if (!seen.Add(key))
+                    continue;
+                if (!string.IsNullOrEmpty(rootPath) && string.Equals(rootPath, key, StringComparison.OrdinalIgnoreCase))
+                    continue;
+            }
+
+            var transform = c.Transform;
+
+            // Only static and skeletal meshes are supported as attachments
+            if (c.Asset is not CUE4Parse.UE4.Assets.Exports.StaticMesh.UStaticMesh
+                && c.Asset is not CUE4Parse.UE4.Assets.Exports.SkeletalMesh.USkeletalMesh)
+            {
+                continue;
+            }
+
+            var attachment = new ResolvedAttachmentDescriptor(
+                AssetId: c.Name ?? "<component>",
+                Asset: c.Asset,
+                Transform: transform,
+                Visual: visual,
+                Stockpile: null,
+                StockpileOptions: Array.Empty<(string, int)>(),
+                Overlay: rootResult.Overlay,
+                MaterialOverrides: c.Overrides);
+
+            list.Add(attachment);
+        }
+
+        // Supplement: include meshes referenced directly on the default object by well-known property names
+        var def = rootResult.DefaultObject;
+        if (def != null)
+        {
+            foreach (var prop in new[] { "SkelMeshComponent", "SkeletalMeshComponent", "MeshComponent", "GunMeshComponent", "SkelMesh", "FlagMesh", "GunMesh", "PrimaryMesh" })
+            {
+                try
+                {
+                    if (!def.TryGetValue(out FPackageIndex idx, prop) || idx.IsNull)
+                        continue;
+
+                    var loaded = idx.Load<UObject>();
+                    if (loaded == null)
+                        continue;
+
+                    UObject assetToAttach = null;
+                    IReadOnlyList<UMaterialInterface>? overrides = null;
+                    FTransform xform = FTransform.Identity;
+                    switch (loaded)
+                    {
+                        case CUE4Parse.UE4.Assets.Exports.SkeletalMesh.USkeletalMesh sk:
+                            assetToAttach = sk;
+                            break;
+                        case CUE4Parse.UE4.Assets.Exports.Component.SkeletalMesh.USkeletalMeshComponent skc:
+                            var smIdx = skc.GetSkeletalMesh();
+                            if (!smIdx.IsNull)
+                            {
+                                var smLoaded = smIdx.Load<CUE4Parse.UE4.Assets.Exports.SkeletalMesh.USkeletalMesh>();
+                                if (smLoaded != null)
+                                {
+                                    assetToAttach = smLoaded;
+                                    overrides = ExtractOverrides(skc);
+                                    xform = skc.GetRelativeTransform();
+                                }
+                            }
+                            break;
+                        case CUE4Parse.UE4.Assets.Exports.StaticMesh.UStaticMesh st:
+                            assetToAttach = st;
+                            break;
+                        case CUE4Parse.UE4.Assets.Exports.Component.StaticMesh.UStaticMeshComponent smc:
+                            var stLoaded = smc.GetLoadedStaticMesh();
+                            if (stLoaded != null)
+                            {
+                                assetToAttach = stLoaded;
+                                overrides = ExtractOverrides(smc);
+                                xform = smc.GetRelativeTransform();
+                            }
+                            break;
+                    }
+
+                    if (assetToAttach == null)
+                        continue;
+
+                    // Heuristic: if we only found a raw mesh but no component, search the default object
+                    // for a component that references the same mesh to recover overrides + transform.
+                    if (verbose && overrides != null)
+                    {
+                        Console.WriteLine($"[resolver] component overrides count={overrides.Count} for prop '{prop}'");
+                    }
+
+                    if (overrides == null && def != null && assetToAttach is UObject meshObj)
+                    {
+                        if (TryFindReferencingComponent(def, meshObj, out var comp))
+                        {
+                            overrides = ExtractOverrides(comp);
+                            if (comp is CUE4Parse.UE4.Assets.Exports.Component.USceneComponent sc)
+                                xform = sc.GetRelativeTransform();
+                            if (verbose)
+                            {
+                                var count = overrides?.Count ?? 0;
+                                Console.WriteLine($"[resolver] recovered component overrides count={count} via scan for prop '{prop}'");
+                            }
+                        }
+                    }
+
+                    var path = string.Empty;
+                    try { path = assetToAttach.GetPathName(); } catch { }
+                    if (!string.IsNullOrEmpty(path) && (!seen.Add(path) || (rootPath?.Equals(path, StringComparison.OrdinalIgnoreCase) ?? false)))
+                        continue;
+
+                    var attachment = new ResolvedAttachmentDescriptor(
+                        AssetId: prop,
+                        Asset: assetToAttach,
+                        Transform: xform,
+                        Visual: visual,
+                        Stockpile: null,
+                        StockpileOptions: Array.Empty<(string, int)>(),
+                        Overlay: rootResult.Overlay,
+                        MaterialOverrides: overrides);
+                    list.Add(attachment);
+                    if (verbose)
+                        Console.WriteLine($"[resolver] default-object prop '{prop}' -> attachment {path}");
+                }
+                catch (Exception ex)
+                {
+                    if (verbose)
+                        Console.Error.WriteLine($"[resolver] failed to read default-object prop '{prop}': {ex.Message}");
+                }
+            }
+        }
+
+        static IReadOnlyList<UMaterialInterface>? ExtractOverrides(UObject component)
+        {
+            try
+            {
+                if (component.TryGetValue(out FPackageIndex[] materialIdxs, "OverrideMaterials") && materialIdxs is { Length: > 0 })
+                {
+                    var list = new List<UMaterialInterface>(materialIdxs.Length);
+                    foreach (var idx in materialIdxs)
+                    {
+                        if (idx.IsNull) { list.Add(null); continue; }
+                        if (idx.Load<UMaterialInterface>() is { } mat)
+                            list.Add(mat);
+                        else list.Add(null);
+                    }
+                    return list;
+                }
+
+                // Fallback: 'Materials'
+                if (component.TryGetValue(out FPackageIndex[] materials, "Materials") && materials is { Length: > 0 })
+                {
+                    var list = new List<UMaterialInterface>(materials.Length);
+                    foreach (var idx in materials)
+                    {
+                        if (idx.IsNull) { list.Add(null); continue; }
+                        if (idx.Load<UMaterialInterface>() is { } mat)
+                            list.Add(mat);
+                        else list.Add(null);
+                    }
+                    return list;
+                }
+            }
+            catch
+            {
+                // ignore
+            }
+            return null;
+        }
+
+        static bool TryFindReferencingComponent(UObject owner, UObject targetMesh, out UObject component)
+        {
+            component = null!;
+            try
+            {
+                foreach (var prop in owner.Properties)
+                {
+                    if (prop?.Tag is ObjectProperty objProp)
+                    {
+                        var child = objProp.Value?.Load<UObject>();
+                        if (child == null) continue;
+
+                        if (child is CUE4Parse.UE4.Assets.Exports.Component.SkeletalMesh.USkeletalMeshComponent skc)
+                        {
+                            var idx = skc.GetSkeletalMesh();
+                            if (!idx.IsNull && ReferenceEquals(idx.Load<UObject>(), targetMesh))
+                            {
+                                component = child;
+                                return true;
+                            }
+                        }
+                        else if (child is CUE4Parse.UE4.Assets.Exports.Component.StaticMesh.UStaticMeshComponent smc)
+                        {
+                            var st = smc.GetLoadedStaticMesh();
+                            if (st != null && ReferenceEquals(st, targetMesh))
+                            {
+                                component = child;
+                                return true;
+                            }
+                        }
+                    }
+                    else if (prop?.Tag is ArrayProperty arrProp)
+                    {
+                        foreach (var elem in arrProp.Value.Properties)
+                        {
+                            if (elem is ObjectProperty arrObj)
+                            {
+                                var child = arrObj.Value?.Load<UObject>();
+                                if (child == null) continue;
+                                if (child is CUE4Parse.UE4.Assets.Exports.Component.SkeletalMesh.USkeletalMeshComponent skc)
+                                {
+                                    var idx = skc.GetSkeletalMesh();
+                                    if (!idx.IsNull && ReferenceEquals(idx.Load<UObject>(), targetMesh))
+                                    {
+                                        component = child;
+                                        return true;
+                                    }
+                                }
+                                else if (child is CUE4Parse.UE4.Assets.Exports.Component.StaticMesh.UStaticMeshComponent smc)
+                                {
+                                    var st = smc.GetLoadedStaticMesh();
+                                    if (st != null && ReferenceEquals(st, targetMesh))
+                                    {
+                                        component = child;
+                                        return true;
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+            catch { }
+            return false;
+        }
+
+        if (verbose)
+        {
+            Console.WriteLine($"[resolver] blueprint components -> {list.Count} static mesh attachment(s)");
+        }
+
+        return list;
     }
 
     private static IReadOnlyList<ResolvedAttachmentDescriptor> ResolveAttachments(
@@ -93,9 +373,14 @@ internal static class SceneResolver
                     var snooperTransform = CombineTransforms(baseTransform, FTransform.Identity);
                     results.Add(new ResolvedAttachmentDescriptor(asset.Id, fallbackMesh, snooperTransform, visual, stockpile, meshResult.StockpileOptions, meshResult.Overlay));
                 }
+                else if (TryLoadSkeletalMesh(provider, asset.Path, verbose, out var fallbackSkeletal))
+                {
+                    var snooperTransform = CombineTransforms(baseTransform, FTransform.Identity);
+                    results.Add(new ResolvedAttachmentDescriptor(asset.Id, fallbackSkeletal, snooperTransform, visual, stockpile, meshResult.StockpileOptions, meshResult.Overlay));
+                }
                 else if (verbose)
                 {
-                    Console.Error.WriteLine($"[resolver] No static mesh available for attachment '{asset.Id}'.");
+                    Console.Error.WriteLine($"[resolver] No mesh available for attachment '{asset.Id}'.");
                 }
 
                 continue;
@@ -202,7 +487,32 @@ internal static class SceneResolver
         {
             if (verbose)
                 Console.Error.WriteLine($"[resolver] Failed to load static mesh '{path}': {ex.Message}");
-            return false;
         }
+        return false;
+    }
+
+    private static bool TryLoadSkeletalMesh(DefaultFileProvider provider, string path, bool verbose, out CUE4Parse.UE4.Assets.Exports.SkeletalMesh.USkeletalMesh mesh)
+    {
+        mesh = null!;
+        if (string.IsNullOrWhiteSpace(path))
+            return false;
+
+        try
+        {
+            var normalized = BlueprintResolver.NormalizeObjectPath(path);
+            var loaded = provider.LoadPackageObject<CUE4Parse.UE4.Assets.Exports.SkeletalMesh.USkeletalMesh>(normalized);
+            if (loaded != null)
+            {
+                mesh = loaded;
+                return true;
+            }
+        }
+        catch
+        {
+            if (verbose)
+                Console.Error.WriteLine($"[resolver] Failed to load skeletal mesh '{path}'.");
+        }
+
+        return false;
     }
 }

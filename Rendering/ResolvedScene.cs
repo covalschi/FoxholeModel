@@ -1,6 +1,7 @@
 using System.Collections.Generic;
 using CUE4Parse.UE4.Assets.Exports;
 using CUE4Parse.UE4.Assets.Exports.StaticMesh;
+using CUE4Parse.UE4.Assets.Exports.Material;
 using CUE4Parse.UE4.Assets.Exports.Texture;
 using CUE4Parse.UE4.Objects.Core.Math;
 
@@ -19,12 +20,13 @@ internal sealed record ResolvedRootAsset(
 
 internal sealed record ResolvedAttachmentDescriptor(
     string AssetId,
-    UStaticMesh Mesh,
+    UObject Asset,
     FTransform Transform,
     AssetVisualProperties Visual,
     StockpileSelection? Stockpile,
     IReadOnlyList<(string ItemPath, int Quantity)> StockpileOptions,
-    OverlayMaskData Overlay);
+    OverlayMaskData Overlay,
+    IReadOnlyList<UMaterialInterface>? MaterialOverrides = null);
 
 internal readonly record struct OverlayMaskData(
     UTexture2D? MudMask,

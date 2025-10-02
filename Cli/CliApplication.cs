@@ -6,10 +6,7 @@ internal static class CliApplication
 {
     public static RootCommand BuildRootCommand()
     {
-        var pakDirOption = new Option<DirectoryInfo>("--pak-dir", "Root directory containing Foxhole pak files")
-        {
-            IsRequired = true
-        };
+        var pakDirOption = new Option<DirectoryInfo?>("--pak-dir", "Root directory containing Foxhole pak files (defaults to Steam install under C:/Program Files...)");
 
         var mappingOption = new Option<FileInfo?>("--mapping", () => null, "Optional USMAP mapping file");
         var aesOption = new Option<string?>("--aes-key", () => null, "Optional AES key in hex (0x...)");
@@ -28,6 +25,7 @@ internal static class CliApplication
         root.AddCommand(CargoCommandFactory.Create(pakDirOption, mappingOption, aesOption, gameOption, verboseOption));
         root.AddCommand(LightingCommandFactory.Create(pakDirOption, mappingOption, aesOption, gameOption, verboseOption));
         root.AddCommand(VariantsCommandFactory.Create(pakDirOption, mappingOption, aesOption, gameOption, verboseOption));
+        root.AddCommand(SearchCommandFactory.Create(pakDirOption, mappingOption, aesOption, gameOption, verboseOption));
 
         return root;
     }

@@ -105,7 +105,7 @@ struct Light {
 uniform Parameters uParameters;
 uniform Light uLights[MAX_LIGHT_COUNT];
 uniform int uNumLights;
-uniform int uUvCount;
+uniform int UvCount;
 uniform float uOpacity;
 uniform bool uDebugSolidColor;
 uniform vec4 uDebugColor;
@@ -118,7 +118,7 @@ out vec4 FragColor;
 
 int LayerToIndex()
 {
-    return clamp(fTexLayer, 0, uUvCount - 1);
+    return clamp(fTexLayer, 0, UvCount - 1);
 }
 
 vec4 SamplerToVector(sampler2D s, vec2 coords)

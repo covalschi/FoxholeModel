@@ -7,7 +7,7 @@ namespace FModelHeadless.Cli;
 
 internal static class CargoCommandFactory
 {
-    public static Command Create(Option<DirectoryInfo> pakDirOption, Option<FileInfo?> mappingOption, Option<string?> aesOption, Option<string> gameOption, Option<bool> verboseOption)
+    public static Command Create(Option<DirectoryInfo?> pakDirOption, Option<FileInfo?> mappingOption, Option<string?> aesOption, Option<string> gameOption, Option<bool> verboseOption)
     {
         var root = new Command("cargo", "Cargo attachment helpers");
 
@@ -23,7 +23,7 @@ internal static class CargoCommandFactory
         anchorCommand.AddOption(basePropertyOption);
         anchorCommand.AddOption(transferPropertyOption);
 
-        anchorCommand.SetHandler((DirectoryInfo pakDir, FileInfo? mapping, string? aes, string gameTag, bool verbose, string blueprintPath, string baseProperty, string transferProperty) =>
+        anchorCommand.SetHandler((DirectoryInfo? pakDir, FileInfo? mapping, string? aes, string gameTag, bool verbose, string blueprintPath, string baseProperty, string transferProperty) =>
         {
             try
             {

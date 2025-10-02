@@ -7,7 +7,7 @@ namespace FModelHeadless.Cli;
 
 internal static class VariantsCommandFactory
 {
-    public static Command Create(Option<DirectoryInfo> pakDirOption, Option<FileInfo?> mappingOption, Option<string?> aesOption, Option<string> gameOption, Option<bool> verboseOption)
+    public static Command Create(Option<DirectoryInfo?> pakDirOption, Option<FileInfo?> mappingOption, Option<string?> aesOption, Option<string> gameOption, Option<bool> verboseOption)
     {
         var root = new Command("variants", "Variant and overlay helpers");
 
@@ -18,7 +18,7 @@ internal static class VariantsCommandFactory
 
         var colorsCommand = new Command("colors", "List color variants exposed by the blueprint");
         colorsCommand.AddOption(blueprintOption);
-        colorsCommand.SetHandler((DirectoryInfo pakDir, FileInfo? mapping, string? aes, string gameTag, bool verbose, string blueprintPath) =>
+        colorsCommand.SetHandler((DirectoryInfo? pakDir, FileInfo? mapping, string? aes, string gameTag, bool verbose, string blueprintPath) =>
         {
             try
             {
@@ -50,7 +50,7 @@ internal static class VariantsCommandFactory
 
         var overlayCommand = new Command("overlays", "Inspect mud/snow overlay parameters");
         overlayCommand.AddOption(blueprintOption);
-        overlayCommand.SetHandler((DirectoryInfo pakDir, FileInfo? mapping, string? aes, string gameTag, bool verbose, string blueprintPath) =>
+        overlayCommand.SetHandler((DirectoryInfo? pakDir, FileInfo? mapping, string? aes, string gameTag, bool verbose, string blueprintPath) =>
         {
             try
             {

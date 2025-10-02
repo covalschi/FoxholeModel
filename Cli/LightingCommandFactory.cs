@@ -8,7 +8,7 @@ namespace FModelHeadless.Cli;
 
 internal static class LightingCommandFactory
 {
-    public static Command Create(Option<DirectoryInfo> pakDirOption, Option<FileInfo?> mappingOption, Option<string?> aesOption, Option<string> gameOption, Option<bool> verboseOption)
+    public static Command Create(Option<DirectoryInfo?> pakDirOption, Option<FileInfo?> mappingOption, Option<string?> aesOption, Option<string> gameOption, Option<bool> verboseOption)
     {
         var command = new Command("lighting", "Sample Foxhole lighting data");
 
@@ -25,7 +25,7 @@ internal static class LightingCommandFactory
         command.AddOption(worldOption);
         command.AddOption(hoursOption);
 
-        command.SetHandler((DirectoryInfo pakDir, FileInfo? mapping, string? aes, string gameTag, bool verbose, string worldPath, float[] hours) =>
+        command.SetHandler((DirectoryInfo? pakDir, FileInfo? mapping, string? aes, string gameTag, bool verbose, string worldPath, float[] hours) =>
         {
             try
             {
