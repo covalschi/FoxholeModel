@@ -10,7 +10,7 @@ using CUE4Parse.UE4.Assets.Objects.Properties;
 using CUE4Parse.UE4.Objects.UObject;
 using CUE4Parse.UE4.Objects.Core.Math;
 using FModelHeadless.Cli;
-using FModelHeadless.Lib.Cargo;
+// CargoPlatformAnalyzer removed; anchor base transform computed locally
 using FModelHeadless.Lib.Common;
 using FModelHeadless.Rendering;
 
@@ -207,10 +207,8 @@ internal static class SceneResolver
                         if (TryFindReferencingComponent(def, meshObj, out var comp))
                         {
                             overrides = MaterialOverrideReader.ReadOverrides(comp);
-                            if (comp is CUE4Parse.UE4.Assets.Exports.Component.USceneComponent sc)
-                                xform = sc.GetRelativeTransform();
-                            else
-                                xform = TransformUtil.TryGetRelativeTransformFallback(comp);
+                            // Compose full world transform via AttachParent chain and optional sockets
+                            xform = ComputeWorldTransformFromComponent(provider, comp, verbose);
                             if (verbose)
                             {
                                 var count = overrides?.Count ?? 0;
@@ -567,14 +565,11 @@ internal static class SceneResolver
             {
                 if (verbose)
                     Console.WriteLine($"[resolver] attachment '{asset.Id}' parent metadata='{parentMetadataPath}' anchor='{anchorName}'");
-                if (!CargoPlatformAnalyzer.TryComputeAnchor(provider, parentMetadataPath, out var anchor, baseMeshProperty: anchorName, transferProperty: "TransferLocation", verbose: verbose))
+                var baseProp = string.Equals(anchorName, "CargoPlatform", StringComparison.OrdinalIgnoreCase) ? "BaseMesh" : anchorName;
+                if (!TryComputeAnchorBase(provider, parentMetadataPath, baseProp, verbose, out anchorTransform))
                 {
                     if (verbose)
                         Console.Error.WriteLine($"[resolver] Unable to compute anchor '{anchorName}' on '{parentMetadataPath}' for asset '{asset.Id}'.");
-                }
-                else
-                {
-                    anchorTransform = anchor.BaseMeshTransform;
                 }
 
                 // Optional socket-based placement relative to parent
@@ -657,6 +652,33 @@ internal static class SceneResolver
             Clamp01(snow),
             diffuseOverride,
             colorMaterialIndex);
+    }
+
+    // Minimal anchor computation: resolve a scene component by property name on the blueprint CDO
+    // and return its relative transform. When anchorName == "CargoPlatform", we map to "BaseMesh".
+    private static bool TryComputeAnchorBase(DefaultFileProvider provider, string blueprintPath, string baseMeshProperty, bool verbose, out FTransform baseTransform)
+    {
+        baseTransform = FTransform.Identity;
+        try
+        {
+            if (!BlueprintResolver.TryFind(provider, blueprintPath, verbose, out var blueprint, out var resolved))
+                return false;
+            var def = blueprint.ClassDefaultObject.Load<UObject>();
+            if (def == null) return false;
+            if (!def.TryGetValue(out FPackageIndex idx, baseMeshProperty) || idx.IsNull)
+                return false;
+            var comp = idx.Load<UObject>();
+            if (comp == null) return false;
+
+            baseTransform = TransformUtil.ExtractRelativeTransform(comp);
+            return true;
+        }
+        catch (Exception ex)
+        {
+            if (verbose)
+                Console.Error.WriteLine($"[resolver] Anchor compute failed for '{blueprintPath}.{baseMeshProperty}': {ex.Message}");
+            return false;
+        }
     }
 
     private static StockpileSelection? CreateStockpileSelection(SceneAssetProperties props)

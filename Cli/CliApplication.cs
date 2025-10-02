@@ -22,7 +22,7 @@ internal static class CliApplication
 
         root.AddCommand(RenderCommandFactory.Create(pakDirOption, mappingOption, aesOption, gameOption, verboseOption));
         root.AddCommand(BlueprintCommandFactory.Create(pakDirOption, mappingOption, aesOption, gameOption, verboseOption));
-        root.AddCommand(CargoCommandFactory.Create(pakDirOption, mappingOption, aesOption, gameOption, verboseOption));
+        // Cargo command removed; anchor helpers are handled internally by the resolver
         root.AddCommand(LightingCommandFactory.Create(pakDirOption, mappingOption, aesOption, gameOption, verboseOption));
         root.AddCommand(VariantsCommandFactory.Create(pakDirOption, mappingOption, aesOption, gameOption, verboseOption));
         root.AddCommand(SearchCommandFactory.Create(pakDirOption, mappingOption, aesOption, gameOption, verboseOption));

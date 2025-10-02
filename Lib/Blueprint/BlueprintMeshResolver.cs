@@ -15,7 +15,7 @@ using CUE4Parse.UE4.Objects.Core.Math;
 using CUE4Parse.UE4.Objects.Engine;
 using CUE4Parse.UE4.Objects.UObject;
 using FModelHeadless.Cli;
-using FModelHeadless.Lib.Cargo;
+// CargoPlatformAnalyzer removed; local base-mesh helpers used for anchor shortcuts
 using FModelHeadless.Lib.Variants;
 using FModelHeadless.Rendering;
 
@@ -82,27 +82,9 @@ internal static class BlueprintMeshResolver
 
                 if (looksAux)
                 {
-                    var replacedFromAnchors = false;
-                    foreach (var candidate in GetAnchorCandidates())
-                    {
-                        if (!CargoPlatformAnalyzer.TryComputeAnchor(provider, path, out var anchor2, baseMeshProperty: candidate, transferProperty: "TransferLocation", verbose: verbose))
-                            continue;
-
-                        if (string.IsNullOrWhiteSpace(anchor2.BaseMeshAssetPath))
-                            continue;
-
-                        if (verbose)
-                            Console.WriteLine($"[resolver] fallback anchor base mesh path ({candidate}): {anchor2.BaseMeshAssetPath}");
-
-                        var normalized = BlueprintResolver.NormalizeObjectPath(anchor2.BaseMeshAssetPath);
-                        var replaced = TryLoadMesh(provider, normalized, verbose);
-                        if (replaced != null)
-                        {
-                            asset = replaced;
-                            replacedFromAnchors = true;
-                            break;
-                        }
-                    }
+                    var replacedFromAnchors = TryGetBaseMeshFromAnchors(provider, path, GetAnchorCandidates(), verbose, out var anchorMeshObj);
+                    if (replacedFromAnchors && anchorMeshObj != null)
+                        asset = anchorMeshObj;
 
                     if (!replacedFromAnchors)
                     {
@@ -121,22 +103,8 @@ internal static class BlueprintMeshResolver
                 var token = ExtractRootToken(root.Path);
                 asset = GuessVehicleMesh(provider, token, verbose);
 
-                foreach (var candidate in GetAnchorCandidates())
-                {
-                    if (!CargoPlatformAnalyzer.TryComputeAnchor(provider, path, out var anchor, baseMeshProperty: candidate, transferProperty: "TransferLocation", verbose: verbose))
-                        continue;
-
-                    if (string.IsNullOrWhiteSpace(anchor.BaseMeshAssetPath))
-                        continue;
-
-                    if (verbose)
-                        Console.WriteLine($"[resolver] anchor base mesh path ({candidate}): {anchor.BaseMeshAssetPath}");
-
-                    var normalized = BlueprintResolver.NormalizeObjectPath(anchor.BaseMeshAssetPath);
-                    asset = TryLoadMesh(provider, normalized, verbose);
-                    if (asset != null)
-                        break;
-                }
+                if (asset == null)
+                    TryGetBaseMeshFromAnchors(provider, path, GetAnchorCandidates(), verbose, out asset);
             }
 
             if (asset == null)
@@ -583,13 +551,7 @@ internal static class BlueprintMeshResolver
             if (!visited.Add(key))
                 continue;
 
-            var variants = CargoPlatformAnalyzer.GetMultiplexVariants(obj, verbose);
-            if (variants.Count > 0)
-            {
-                var variantMesh = SelectMultiplexVariant(provider, variants, hpState, verbose);
-                if (variantMesh != null)
-                    AddMeshResult(results, seenMeshes, variantMesh, FTransform.Identity);
-            }
+            // Multiplex variants removed with CargoPlatformAnalyzer
 
             if (TryGetStaticMeshFromProperty(provider, obj, "StaticMesh", verbose, out var staticMesh))
             {
@@ -632,32 +594,53 @@ internal static class BlueprintMeshResolver
         return results;
     }
 
-    private static UStaticMesh? SelectMultiplexVariant(DefaultFileProvider provider, IReadOnlyList<CargoPlatformAnalyzer.MultiplexVariant> variants, string hpState, bool verbose)
+    // Multiplex selection removed
+
+    private static bool TryGetBaseMeshFromAnchors(DefaultFileProvider provider, string blueprintPath, IEnumerable<string> candidates, bool verbose, out UObject? mesh)
     {
-        if (variants == null || variants.Count == 0)
-            return null;
+        mesh = null;
+        if (!BlueprintResolver.TryFind(provider, blueprintPath, verbose, out var blueprint, out var resolved))
+            return false;
+        var def = blueprint.ClassDefaultObject.Load<UObject>();
+        if (def == null) return false;
 
-        var sorted = variants.OrderBy(v => v.Threshold).ToList();
-        CargoPlatformAnalyzer.MultiplexVariant selected = sorted[^1];
-
-        if (hpState == "critical")
-            selected = sorted[0];
-        else if (hpState == "damaged" && sorted.Count > 2)
-            selected = sorted[sorted.Count - 2];
-        else if (hpState == "damaged" && sorted.Count > 1)
-            selected = sorted[0];
-
-        if (selected.StaticMeshPath == null)
-            return null;
-
-        if (!TryLoadStaticMesh(provider, selected.StaticMeshPath, verbose, out var mesh))
+        foreach (var candidate in candidates)
         {
-            if (verbose)
-                Console.Error.WriteLine($"[resolver] Failed to load multiplex mesh '{selected.StaticMeshPath}'.");
-            return null;
+            if (TryGetStaticMeshFromComponentProperty(provider, def, candidate, verbose, out var m))
+            {
+                mesh = m;
+                if (verbose)
+                {
+                    try { Console.WriteLine($"[resolver] anchor base mesh ({candidate}) -> {m.GetPathName()}"); } catch { }
+                }
+                return true;
+            }
         }
+        return false;
+    }
 
-        return mesh;
+    private static bool TryGetStaticMeshFromComponentProperty(DefaultFileProvider provider, UObject owner, string propertyName, bool verbose, out UStaticMesh mesh)
+    {
+        mesh = null!;
+        try
+        {
+            if (!owner.TryGetValue(out FPackageIndex idx, propertyName) || idx.IsNull)
+                return false;
+            var comp = idx.Load<UObject>();
+            if (comp is UStaticMeshComponent smc)
+            {
+                var loaded = smc.GetLoadedStaticMesh();
+                if (loaded != null) { mesh = loaded; return true; }
+            }
+            // Fallback: component-like object holding a StaticMesh reference
+            if (TryGetStaticMeshFromProperty(provider, comp, "StaticMesh", verbose, out mesh))
+                return true;
+        }
+        catch (Exception ex)
+        {
+            if (verbose) Console.Error.WriteLine($"[resolver] Component property '{propertyName}' read failed: {ex.Message}");
+        }
+        return false;
     }
 
     private static void AddMeshResult(List<(UStaticMesh mesh, FTransform transform)> meshes, HashSet<string> seen, UStaticMesh mesh, FTransform transform)
