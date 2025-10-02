@@ -11,6 +11,7 @@ using CUE4Parse.UE4.Objects.UObject;
 using CUE4Parse.UE4.Objects.Core.Math;
 using FModelHeadless.Cli;
 using FModelHeadless.Lib.Cargo;
+using FModelHeadless.Lib.Common;
 using FModelHeadless.Rendering;
 
 namespace FModelHeadless.Lib.Blueprint;
@@ -139,7 +140,7 @@ internal static class SceneResolver
                                 if (smLoaded != null)
                                 {
                                     assetToAttach = smLoaded;
-                                    overrides = ExtractOverrides(skc);
+                                    overrides = MaterialOverrideReader.ReadOverrides(skc);
                                     xform = skc.GetRelativeTransform();
                                 }
                             }
@@ -152,7 +153,7 @@ internal static class SceneResolver
                             if (stLoaded != null)
                             {
                                 assetToAttach = stLoaded;
-                                overrides = ExtractOverrides(smc);
+                                overrides = MaterialOverrideReader.ReadOverrides(smc);
                                 xform = smc.GetRelativeTransform();
                             }
                             break;
@@ -181,7 +182,7 @@ internal static class SceneResolver
                                     if (meshRef != null)
                                     {
                                         assetToAttach = meshRef;
-                                        overrides = ExtractOverrides(loaded);
+                                        overrides = MaterialOverrideReader.ReadOverrides(loaded);
                                         // Compute world transform by walking AttachParent chain and optional socket
                                         xform = ComputeWorldTransformFromComponent(provider, loaded, verbose);
                                     }
@@ -205,11 +206,11 @@ internal static class SceneResolver
                     {
                         if (TryFindReferencingComponent(def, meshObj, out var comp))
                         {
-                            overrides = ExtractOverrides(comp);
+                            overrides = MaterialOverrideReader.ReadOverrides(comp);
                             if (comp is CUE4Parse.UE4.Assets.Exports.Component.USceneComponent sc)
                                 xform = sc.GetRelativeTransform();
                             else
-                                xform = TryGetRelativeTransformFallback(comp);
+                                xform = TransformUtil.TryGetRelativeTransformFallback(comp);
                             if (verbose)
                             {
                                 var count = overrides?.Count ?? 0;
@@ -289,7 +290,7 @@ internal static class SceneResolver
                         if (already) continue;
 
                         var worldXform = ComputeWorldTransformFromComponent(provider, child, verbose);
-                        var overrides = ExtractOverrides(child);
+                        var overrides = MaterialOverrideReader.ReadOverrides(child);
                         var attach = new ResolvedAttachmentDescriptor(
                             AssetId: "FlagMeshComponent",
                             Asset: meshRef,
@@ -308,43 +309,7 @@ internal static class SceneResolver
             catch { }
         }
 
-        static IReadOnlyList<UMaterialInterface>? ExtractOverrides(UObject component)
-        {
-            try
-            {
-                if (component.TryGetValue(out FPackageIndex[] materialIdxs, "OverrideMaterials") && materialIdxs is { Length: > 0 })
-                {
-                    var list = new List<UMaterialInterface>(materialIdxs.Length);
-                    foreach (var idx in materialIdxs)
-                    {
-                        if (idx.IsNull) { list.Add(null); continue; }
-                        if (idx.Load<UMaterialInterface>() is { } mat)
-                            list.Add(mat);
-                        else list.Add(null);
-                    }
-                    return list;
-                }
-
-                // Fallback: 'Materials'
-                if (component.TryGetValue(out FPackageIndex[] materials, "Materials") && materials is { Length: > 0 })
-                {
-                    var list = new List<UMaterialInterface>(materials.Length);
-                    foreach (var idx in materials)
-                    {
-                        if (idx.IsNull) { list.Add(null); continue; }
-                        if (idx.Load<UMaterialInterface>() is { } mat)
-                            list.Add(mat);
-                        else list.Add(null);
-                    }
-                    return list;
-                }
-            }
-            catch
-            {
-                // ignore
-            }
-            return null;
-        }
+        // (extract overrides moved to MaterialOverrideReader)
 
         static bool TryFindReferencingComponent(UObject owner, UObject targetMesh, out UObject component)
         {
@@ -479,7 +444,7 @@ internal static class SceneResolver
                 if (!string.IsNullOrWhiteSpace(socketName))
                 {
                     var parentMeshPath = TryGetMeshPathFromComponent(provider, parent, verbose);
-                    if (!string.IsNullOrEmpty(parentMeshPath) && TryGetParentSocketTransform(provider, parentMeshPath, socketName, verbose, out var socketXform))
+                    if (!string.IsNullOrEmpty(parentMeshPath) && FModelHeadless.Lib.Common.MeshSocketUtil.TryGetParentSocketTransform(provider, parentMeshPath, socketName, verbose, out var socketXform))
                     {
                         world = world * socketXform;
                     }
@@ -537,17 +502,13 @@ internal static class SceneResolver
 
         if (filters.IncludePathContains is { Length: > 0 })
         {
-            var any = false;
-            foreach (var token in filters.IncludePathContains)
-                if (!string.IsNullOrWhiteSpace(token) && path.IndexOf(token, StringComparison.OrdinalIgnoreCase) >= 0)
-                { any = true; break; }
-            if (!any) return false;
+            if (!FilterUtil.AnyTokenMatch(path, null, filters.IncludePathContains))
+                return false;
         }
         if (filters.ExcludePathContains is { Length: > 0 })
         {
-            foreach (var token in filters.ExcludePathContains)
-                if (!string.IsNullOrWhiteSpace(token) && path.IndexOf(token, StringComparison.OrdinalIgnoreCase) >= 0)
-                    return false;
+            if (FilterUtil.AnyTokenMatch(path, null, filters.ExcludePathContains))
+                return false;
         }
         if (filters.IncludeTags is { Length: > 0 })
         {
@@ -566,21 +527,7 @@ internal static class SceneResolver
         return true;
     }
 
-    private static FTransform TryGetRelativeTransformFallback(UObject obj)
-    {
-        var t = FTransform.Identity;
-        try
-        {
-            if (obj.TryGetValue(out CUE4Parse.UE4.Objects.Core.Math.FVector loc, "RelativeLocation"))
-                t.Translation = loc * FModel.Views.Snooper.Constants.SCALE_DOWN_RATIO;
-            if (obj.TryGetValue(out CUE4Parse.UE4.Objects.Core.Math.FRotator rot, "RelativeRotation"))
-                t.Rotation = rot.Quaternion();
-            if (obj.TryGetValue(out CUE4Parse.UE4.Objects.Core.Math.FVector scale, "RelativeScale3D"))
-                t.Scale3D = scale;
-        }
-        catch { }
-        return t;
-    }
+    private static FTransform TryGetRelativeTransformFallback(UObject obj) => TransformUtil.TryGetRelativeTransformFallback(obj);
 
     private static int? ParseTeamPreference(string? team)
     {
@@ -633,7 +580,7 @@ internal static class SceneResolver
                 // Optional socket-based placement relative to parent
                 if (!string.IsNullOrWhiteSpace(attachRef.Socket))
                 {
-                    if (!TryGetParentSocketTransform(provider, parentMetadataPath, attachRef.Socket!, verbose, out socketTransform))
+                    if (!FModelHeadless.Lib.Common.MeshSocketUtil.TryGetParentSocketTransform(provider, parentMetadataPath, attachRef.Socket!, verbose, out socketTransform))
                     {
                         if (verbose)
                             Console.Error.WriteLine($"[resolver] Socket '{attachRef.Socket}' not found on '{parentMetadataPath}'");
@@ -645,8 +592,8 @@ internal static class SceneResolver
             var offsetTransform = CreateOffsetTransform(attachRef.Offset);
             var baseTransform = anchorTransform;
             if (!string.IsNullOrWhiteSpace(attachRef.Socket))
-                baseTransform = CombineTransforms(baseTransform, socketTransform);
-            baseTransform = CombineTransforms(baseTransform, offsetTransform);
+                baseTransform = TransformUtil.Combine(baseTransform, socketTransform);
+            baseTransform = TransformUtil.Combine(baseTransform, offsetTransform);
 
             var props = asset.Properties ?? new SceneAssetProperties();
             var meshResult = BlueprintMeshResolver.ResolveAttachmentMeshes(provider, asset, asset.MetadataPath ?? asset.Path, NormalizeHpState(props.HpState), props.ColorVariant, verbose);
@@ -657,12 +604,12 @@ internal static class SceneResolver
             {
                 if (TryLoadStaticMesh(provider, asset.Path, verbose, out var fallbackMesh))
                 {
-                    var snooperTransform = CombineTransforms(baseTransform, FTransform.Identity);
+                    var snooperTransform = TransformUtil.Combine(baseTransform, FTransform.Identity);
                     results.Add(new ResolvedAttachmentDescriptor(asset.Id, fallbackMesh, snooperTransform, visual, stockpile, meshResult.StockpileOptions, meshResult.Overlay));
                 }
                 else if (TryLoadSkeletalMesh(provider, asset.Path, verbose, out var fallbackSkeletal))
                 {
-                    var snooperTransform = CombineTransforms(baseTransform, FTransform.Identity);
+                    var snooperTransform = TransformUtil.Combine(baseTransform, FTransform.Identity);
                     results.Add(new ResolvedAttachmentDescriptor(asset.Id, fallbackSkeletal, snooperTransform, visual, stockpile, meshResult.StockpileOptions, meshResult.Overlay));
                 }
                 else if (verbose)
@@ -675,7 +622,7 @@ internal static class SceneResolver
 
             foreach (var meshInfo in meshResult.Meshes)
             {
-                var combined = CombineTransforms(baseTransform, meshInfo.Transform);
+                var combined = TransformUtil.Combine(baseTransform, meshInfo.Transform);
                 results.Add(new ResolvedAttachmentDescriptor(asset.Id, meshInfo.Mesh, combined, visual, stockpile, meshResult.StockpileOptions, meshResult.Overlay));
             }
         }
@@ -751,59 +698,7 @@ internal static class SceneResolver
         return new FTransform(rotationEuler.Quaternion(), translation, scale);
     }
 
-    private static FTransform CombineTransforms(FTransform baseTransform, FTransform componentTransform)
-    {
-        var translation = componentTransform.Translation + baseTransform.Translation;
-        var rotation = componentTransform.Rotation * baseTransform.Rotation;
-        var scale = componentTransform.Scale3D;
-        return new FTransform(rotation, translation, scale);
-    }
-
-    private static bool TryGetParentSocketTransform(DefaultFileProvider provider, string parentPath, string socketName, bool verbose, out FTransform transform)
-    {
-        transform = FTransform.Identity;
-        try
-        {
-            // Prefer skeletal sockets
-            if (TryLoadSkeletalMesh(provider, parentPath, verbose, out var skMesh) && skMesh?.Sockets is { Length: > 0 })
-            {
-                foreach (var socketRef in skMesh.Sockets)
-                {
-                    if (!socketRef.TryLoad(out CUE4Parse.UE4.Assets.Exports.SkeletalMesh.USkeletalMeshSocket socket) || socket == null)
-                        continue;
-                    if (string.Equals(socket.SocketName.Text, socketName, StringComparison.OrdinalIgnoreCase))
-                    {
-                        var rot = socket.RelativeRotation;
-                        transform = new FTransform(rot.Quaternion(), socket.RelativeLocation, CUE4Parse.UE4.Objects.Core.Math.FVector.OneVector);
-                        return true;
-                    }
-                }
-            }
-
-            // Static mesh sockets
-            if (TryLoadStaticMesh(provider, parentPath, verbose, out var stMesh) && stMesh?.Sockets is { Length: > 0 })
-            {
-                foreach (var socketRef in stMesh.Sockets)
-                {
-                    if (!socketRef.TryLoad(out CUE4Parse.UE4.Assets.Exports.StaticMesh.UStaticMeshSocket socket) || socket == null)
-                        continue;
-                    if (string.Equals(socket.SocketName.Text, socketName, StringComparison.OrdinalIgnoreCase))
-                    {
-                        // UStaticMeshSocket exposes RelativeLocation and often RelativeRotation
-                        var rot = socket.RelativeRotation;
-                        transform = new FTransform(rot.Quaternion(), socket.RelativeLocation, CUE4Parse.UE4.Objects.Core.Math.FVector.OneVector);
-                        return true;
-                    }
-                }
-            }
-        }
-        catch (Exception ex)
-        {
-            if (verbose)
-                Console.Error.WriteLine($"[resolver] Socket transform read failed on '{parentPath}': {ex.Message}");
-        }
-        return false;
-    }
+    // Transform combine moved to TransformUtil; socket transform moved to MeshSocketUtil
 
     private static bool TryLoadStaticMesh(DefaultFileProvider provider, string path, bool verbose, out UStaticMesh mesh)
     {

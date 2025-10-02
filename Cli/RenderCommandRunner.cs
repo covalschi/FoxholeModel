@@ -81,7 +81,7 @@ internal static class RenderCommandRunner
         var asset = scene.Root.Asset;
         if (settings.Verbose)
         {
-            LogSocketSummary(asset);
+            FModelHeadless.Lib.Common.MeshSocketUtil.LogSocketSummary(asset);
         }
 
         if (!outputDir.Exists)
@@ -135,37 +135,7 @@ internal static class RenderCommandRunner
         }
     }
 
-    private static void LogSocketSummary(UObject asset)
-    {
-        switch (asset)
-        {
-            case USkeletalMesh skeletal when skeletal.Sockets is { Length: > 0 }:
-                Console.WriteLine($"[render] Skeletal mesh sockets ({skeletal.Sockets.Length}):");
-                foreach (var socketRef in skeletal.Sockets)
-                {
-                    if (!socketRef.TryLoad(out USkeletalMeshSocket socket) || socket == null)
-                        continue;
-
-                    var name = socket.SocketName.Text;
-                    var bone = socket.BoneName.Text;
-                    var location = socket.RelativeLocation;
-                    Console.WriteLine($"  socket {name} bone={bone} loc=({location.X:F1},{location.Y:F1},{location.Z:F1})");
-                }
-                break;
-            case UStaticMesh staticMesh when staticMesh.Sockets is { Length: > 0 }:
-                Console.WriteLine($"[render] Static mesh sockets ({staticMesh.Sockets.Length}):");
-                foreach (var socketRef in staticMesh.Sockets)
-                {
-                    if (!socketRef.TryLoad(out UStaticMeshSocket socket) || socket == null)
-                        continue;
-
-                    var name = socket.SocketName.Text;
-                    var location = socket.RelativeLocation;
-                    Console.WriteLine($"  socket {name} loc=({location.X:F1},{location.Y:F1},{location.Z:F1})");
-                }
-                break;
-        }
-    }
+    // Socket summary moved to MeshSocketUtil
 
     private static string SanitizePath(string objectPath)
     {

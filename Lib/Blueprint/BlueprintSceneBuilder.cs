@@ -15,6 +15,8 @@ using CUE4Parse.UE4.Objects.UObject;
 using CUE4Parse.UE4.Assets.Objects;
 using CUE4Parse.UE4.Assets;
 
+using FModelHeadless.Lib.Common;
+
 namespace FModelHeadless.Lib.Blueprint;
 
 public static class BlueprintSceneBuilder
@@ -60,7 +62,7 @@ public static class BlueprintSceneBuilder
                     var comp = compIdx.Load<UObject>();
                     if (comp == null) continue;
 
-                    var world = ExtractRelativeTransform(comp);
+                    var world = TransformUtil.ExtractRelativeTransform(comp);
                     switch (comp)
                     {
                         case UStaticMeshComponent smc:
@@ -96,7 +98,7 @@ public static class BlueprintSceneBuilder
                     if (!string.Equals(exp.ExportType, "TemplateComponent", StringComparison.OrdinalIgnoreCase))
                         continue;
 
-                    var compWorld = ExtractRelativeTransform(exp);
+                    var compWorld = TransformUtil.ExtractRelativeTransform(exp);
                     if (!exp.TryGetValue(out FPackageIndex childIdx, "TemplateActor") || childIdx.IsNull)
                         continue;
                     if (!childIdx.TryLoad(out UBlueprintGeneratedClass childBp))
@@ -152,11 +154,10 @@ public static class BlueprintSceneBuilder
         {
             try
             {
-                var local = template.GetRelativeTransform();
-                NormalizeTransform(ref local);
-                NormalizeTransform(ref worldTransform);
+                var local = TransformUtil.ExtractRelativeTransform(template);
+                TransformUtil.Normalize(ref worldTransform);
                 worldTransform = local * worldTransform;
-                NormalizeTransform(ref worldTransform);
+                TransformUtil.Normalize(ref worldTransform);
             }
             catch (Exception ex)
             {
@@ -248,8 +249,8 @@ public static class BlueprintSceneBuilder
             return;
         }
 
-        NormalizeTransform(ref worldTransform);
-        var overrides = LoadOverrides(component, verbose);
+        TransformUtil.Normalize(ref worldTransform);
+        var overrides = MaterialOverrideReader.ReadOverrides(component);
         var tags = LoadTags(component);
         components.Add(new BlueprintComponent(name, mesh, worldTransform, overrides, tags));
     }
@@ -264,11 +265,11 @@ public static class BlueprintSceneBuilder
             return;
         }
 
-        NormalizeTransform(ref worldTransform);
+        TransformUtil.Normalize(ref worldTransform);
         var instances = component.GetInstances();
         if (instances.Length == 0)
         {
-            var overridesEmpty = LoadOverrides(component, verbose);
+            var overridesEmpty = MaterialOverrideReader.ReadOverrides(component);
             var tagsEmpty = LoadTags(component);
             components.Add(new BlueprintComponent(name, mesh, worldTransform, overridesEmpty, tagsEmpty));
             return;
@@ -277,10 +278,10 @@ public static class BlueprintSceneBuilder
         for (var i = 0; i < instances.Length; i++)
         {
             var instanceTransform = instances[i].TransformData;
-            NormalizeTransform(ref instanceTransform);
+            TransformUtil.Normalize(ref instanceTransform);
             var combined = instanceTransform * worldTransform;
-            NormalizeTransform(ref combined);
-            var overrides = LoadOverrides(component, verbose);
+            TransformUtil.Normalize(ref combined);
+            var overrides = MaterialOverrideReader.ReadOverrides(component);
             var tags = LoadTags(component);
             components.Add(new BlueprintComponent($"{name}[{i}]", mesh, combined, overrides, tags));
         }
@@ -304,8 +305,8 @@ public static class BlueprintSceneBuilder
             return;
         }
 
-        NormalizeTransform(ref worldTransform);
-        var overrides = LoadOverrides(component, verbose);
+        TransformUtil.Normalize(ref worldTransform);
+        var overrides = MaterialOverrideReader.ReadOverrides(component);
         var tags = LoadTags(component);
         components.Add(new BlueprintComponent(name, mesh, worldTransform, overrides, tags));
     }
@@ -323,51 +324,6 @@ public static class BlueprintSceneBuilder
         return node.Name;
     }
 
-    private static void NormalizeTransform(ref FTransform transform)
-    {
-        if (!transform.Rotation.IsNormalized)
-            transform.Rotation.Normalize();
-    }
-
-    private static IReadOnlyList<UMaterialInterface>? LoadOverrides(UObject component, bool verbose)
-    {
-        try
-        {
-            if (component.TryGetValue(out FPackageIndex[] materialIdxs, "OverrideMaterials") && materialIdxs is { Length: > 0 })
-            {
-                var list = new List<UMaterialInterface>(materialIdxs.Length);
-                foreach (var idx in materialIdxs)
-                {
-                    if (idx.IsNull) { list.Add(null); continue; }
-                    if (idx.Load<UMaterialInterface>() is { } mat)
-                        list.Add(mat);
-                    else list.Add(null);
-                }
-                return list;
-            }
-
-            // Fallback to 'Materials' array which sometimes holds the active MIs
-            if (component.TryGetValue(out FPackageIndex[] materials, "Materials") && materials is { Length: > 0 })
-            {
-                var list = new List<UMaterialInterface>(materials.Length);
-                foreach (var idx in materials)
-                {
-                    if (idx.IsNull) { list.Add(null); continue; }
-                    if (idx.Load<UMaterialInterface>() is { } mat)
-                        list.Add(mat);
-                    else list.Add(null);
-                }
-                return list;
-            }
-        }
-        catch (Exception ex)
-        {
-            if (verbose)
-                Console.Error.WriteLine($"[blueprint] failed to read OverrideMaterials: {ex.Message}");
-        }
-        return null;
-    }
-
     private static IReadOnlyList<string>? LoadTags(UObject component)
     {
         try
@@ -377,20 +333,5 @@ public static class BlueprintSceneBuilder
         }
         catch { }
         return null;
-    }
-
-    private static FTransform ExtractRelativeTransform(UObject obj)
-    {
-        try
-        {
-            var loc = obj.GetOrDefault("RelativeLocation", FVector.ZeroVector);
-            var rot = obj.GetOrDefault("RelativeRotation", FRotator.ZeroRotator);
-            var sca = obj.GetOrDefault("RelativeScale3D", FVector.OneVector);
-            return new FTransform(rot.Quaternion(), loc, sca);
-        }
-        catch
-        {
-            return FTransform.Identity;
-        }
     }
 }

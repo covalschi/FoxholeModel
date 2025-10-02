@@ -318,11 +318,6 @@ internal sealed class HeadlessRenderWindow : GameWindow
         var showOnly = _filters.ShowMaterials;
         var hide = _filters.HideMaterials;
 
-        bool Matches(string name, string path, string token)
-            => !string.IsNullOrWhiteSpace(token) &&
-               (name?.IndexOf(token, StringComparison.OrdinalIgnoreCase) >= 0 ||
-                path?.IndexOf(token, StringComparison.OrdinalIgnoreCase) >= 0);
-
         for (var s = 0; s < model.Sections.Length; s++)
         {
             var sec = model.Sections[s];
@@ -334,21 +329,14 @@ internal sealed class HeadlessRenderWindow : GameWindow
 
             if (showOnly is { Length: > 0 })
             {
-                var any = false;
-                foreach (var t in showOnly)
-                {
-                    if (Matches(name, path, t)) { any = true; break; }
-                }
-                sec.Show = any;
+                sec.Show = FModelHeadless.Lib.Common.FilterUtil.AnyTokenMatch(name, path, showOnly);
                 continue;
             }
 
             if (hide is { Length: > 0 })
             {
-                foreach (var t in hide)
-                {
-                    if (Matches(name, path, t)) { sec.Show = false; break; }
-                }
+                if (FModelHeadless.Lib.Common.FilterUtil.AnyTokenMatch(name, path, hide))
+                    sec.Show = false;
             }
         }
     }

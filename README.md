@@ -1,4 +1,4 @@
-# FModelHeadless
+# FoxholeModel
 
 Headless CLI tools for inspecting and rendering Unreal Engine (UE4) assets – tuned for the Foxhole game data – using CUE4Parse and a lightly ported FModel renderer. Runs in a hidden OpenGL context and exports PNG screenshots from a JSON scene description.
 
