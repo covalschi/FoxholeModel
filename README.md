@@ -1,7 +1,8 @@
 # FoxholeModel
 
-Headless CLI tools for inspecting and rendering Unreal Engine (UE4) assets – tuned for the Foxhole game data – using CUE4Parse and a lightly ported FModel renderer. Runs in a hidden OpenGL context and exports PNG screenshots from a JSON scene description.
+Headless CLI tools for inspecting, exporting and rendering Unreal Engine (UE4) assets – tuned for the Foxhole game data – using CUE4Parse and a lightly ported FModel renderer. Runs in a hidden OpenGL context and exports PNG screenshots from a JSON scene description.
 
+- Export of modeles and sounds from pak archives
 - Static + skeletal meshes (including blueprint‑discovered components)
 - Blueprint traversal: SCS/ICH templates, ChildActorComponents, default‑object properties (e.g., `SkelMesh`, `FlagMesh`)
 - Component material overrides, MIC parent climb, vertex color overrides
@@ -115,6 +116,7 @@ The root command is `FModelHeadless` (invoked via `dotnet run` in the scripts). 
 - `lighting`  Sample lighting data
 - `variants`  Variant & overlay helpers
 - `search`  Search mounted virtual paths
+- `export` Export various assets
 
 Examples
 ```bash
