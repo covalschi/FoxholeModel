@@ -52,7 +52,7 @@ internal sealed class HeadlessRenderWindow : GameWindow
             StartVisible = false,
             StartFocused = false,
             WindowBorder = WindowBorder.Hidden,
-            APIVersion = new Version(4, 1),
+            APIVersion = new Version(4, 5),
             Profile = ContextProfile.Core,
             Flags = ContextFlags.ForwardCompatible
         })

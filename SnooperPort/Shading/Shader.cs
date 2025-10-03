@@ -53,15 +53,23 @@ public class Shader : IDisposable
         var handle = GL.CreateShader(type);
 
         var content = reader.ReadToEnd();
-        if (file.Equals("default.frag") && GL.GetInteger(GetPName.MaxTextureCoords) == 0)
-            content = content.Replace("#define MAX_UV_COUNT 8", "#define MAX_UV_COUNT 1");
+        if (file.Equals("default.frag"))
+        {
+            var maxTexCoords = GL.GetInteger(GetPName.MaxTextureCoords);
+            var maxTexImageUnits = GL.GetInteger(GetPName.MaxTextureImageUnits);
+            // We declare samplers as: 4 * MAX_UV_COUNT (Diffuse/Normals/Spec/Emissive)
+            // plus 3 extra (Ao, MudMask, SnowMask). Keep a small safety margin.
+            var safeUv = Math.Max(1, Math.Min(8, (maxTexImageUnits - 4) / 4));
+            if (maxTexCoords == 0 || safeUv < 8)
+            {
+                content = content.Replace("#define MAX_UV_COUNT 8", $"#define MAX_UV_COUNT {safeUv}");
+            }
+        }
         if (type == ShaderType.VertexShader && Array.IndexOf(["default.vert", "outline.vert", "picking.vert"], file) > -1)
         {
             using var splineStream = executingAssembly.GetManifestResourceStream($"{executingAssemblyName}.Resources.spline.vert");
             using var splineReader = new StreamReader(splineStream);
-            content = splineReader.ReadToEnd() + Environment.NewLine + content
-                .Replace("#version 460 core", string.Empty)
-                .Replace("#version 450 core", string.Empty);
+            content = splineReader.ReadToEnd() + Environment.NewLine + RemoveVersionDirective(content);
         }
 
         GL.ShaderSource(handle, content);
@@ -73,6 +81,25 @@ public class Shader : IDisposable
         }
 
         return handle;
+    }
+
+    private static string RemoveVersionDirective(string src)
+    {
+        if (string.IsNullOrEmpty(src)) return string.Empty;
+        using var reader = new StringReader(src);
+        using var writer = new StringWriter();
+        string? line;
+        bool skipped = false;
+        while ((line = reader.ReadLine()) != null)
+        {
+            if (!skipped && line.TrimStart().StartsWith("#version", StringComparison.Ordinal))
+            {
+                skipped = true;
+                continue;
+            }
+            writer.WriteLine(line);
+        }
+        return writer.ToString();
     }
 
     public void Use()

@@ -26,6 +26,7 @@ internal static class CliApplication
         root.AddCommand(LightingCommandFactory.Create(pakDirOption, mappingOption, aesOption, gameOption, verboseOption));
         root.AddCommand(VariantsCommandFactory.Create(pakDirOption, mappingOption, aesOption, gameOption, verboseOption));
         root.AddCommand(SearchCommandFactory.Create(pakDirOption, mappingOption, aesOption, gameOption, verboseOption));
+        root.AddCommand(ExportCommandFactory.Create(pakDirOption, mappingOption, aesOption, gameOption, verboseOption));
 
         return root;
     }
