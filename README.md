@@ -2,7 +2,7 @@
 
 Headless CLI tools for inspecting, exporting and rendering Unreal Engine (UE4) assets – tuned for the Foxhole game data – using CUE4Parse and a lightly ported FModel renderer. Runs in a hidden OpenGL context and exports PNG screenshots from a JSON scene description.
 
-- Export of modeles and sounds from pak archives
+- Export of models and sounds from pak archives
 - Static + skeletal meshes (including blueprint‑discovered components)
 - Blueprint traversal: SCS/ICH templates, ChildActorComponents, default‑object properties (e.g., `SkelMesh`, `FlagMesh`)
 - Component material overrides, MIC parent climb, vertex color overrides
@@ -12,38 +12,47 @@ Headless CLI tools for inspecting, exporting and rendering Unreal Engine (UE4) a
 
 This repository is GPL‑3.0 (see `LICENSE`). Do not commit proprietary game data or keys.
 
-## Quick Start
+## Requirements & Quick Start
 
-Prerequisites
-- Windows with Foxhole installed via Steam (for default pak path) and WSL (Ubuntu recommended)
-- .NET 8 SDK (`dotnet --version` ≥ 8)
-- PowerShell (Windows PowerShell or PowerShell 7)
+Windows (native or via WSL wrapper)
+- Install .NET 8 SDK.
+- Default pak path (if not given): `C:\Program Files (x86)\Steam\steamapps\common\Foxhole\War\Content\Paks`.
+- Build: `dotnet build -c Release` (or use `scripts/build-windows.sh -c Release`).
+- Run (wrapper forwards arguments):
+  ```bash
+  scripts/render-windows.sh render --game-version GAME_UE4_24 --scene output/scene_bpatgunait2.json --verbose
+  ```
 
-Build
+Linux (Arch/Ubuntu examples)
+- Install: .NET 8 SDK/runtime and Mesa OpenGL stack.
+  - Arch: `pacman -S --needed git dotnet-sdk-8.0 dotnet-runtime-8.0 mesa libglvnd`
+  - Debian/Ubuntu: `sudo apt install -y git dotnet-sdk-8.0 mesa-utils libgl1-mesa-dri libegl1`
+- Build (skips CUE4Parse natives by default):
+  ```bash
+  ./scripts/build.sh -c Release
+  ```
+- Optional software GL (llvmpipe) if no GPU context:
+  ```bash
+  export LIBGL_ALWAYS_SOFTWARE=1 GALLIUM_DRIVER=llvmpipe MESA_LOADER_DRIVER_OVERRIDE=swrast \
+         MESA_GL_VERSION_OVERRIDE=4.5 MESA_GLSL_VERSION_OVERRIDE=450
+  ```
+- Run:
+  ```bash
+  dotnet run -c Release -- render --scene output/scene_truck.json --game-version GAME_UE4_24 --verbose
+  ```
+
+Publish a standalone binary (Linux)
 ```bash
-# from repo root (in WSL)
-dotnet restore
-dotnet build -c Release
+dotnet publish -c Release -r linux-x64 --self-contained true -p:PublishSingleFile=true -p:IncludeNativeLibrariesForSelfExtract=true -o dist/linux-x64
+sudo ln -sf "$(pwd)/dist/linux-x64/FModelHeadless" /usr/local/bin/fmodel-headless
 ```
-
-Render (WSL wrapper; no extra `--` before app args)
-```bash
-# Example: render a JSON scene
-scripts/render-windows.sh render \
-  --game-version GAME_UE4_24 \
-  --scene output/scene_bpatgunait2.json \
-  --verbose
-```
-The wrapper calls `scripts/render.ps1` on Windows, which in turn calls `dotnet run -c Release -- …`.
 
 Pak discovery
-- If `--pak-dir` is not provided, the CLI searches common paths, preferring:
-  - `C:\\Program Files (x86)\\Steam\\steamapps\\common\\Foxhole\\War\\Content\\Paks`
-  - WSL mirrors under `/mnt/c/...`
+- If `--pak-dir` is omitted, the CLI probes common Steam locations (Windows and `/mnt/c/...` under WSL).
 
-Environment hints
-- `CUE4PARSE_SKIP_NATIVE=1` (we set this in the wrapper) to skip native extraction helpers
-- `HEADLESS_ENABLE_PP=1` opt‑in to experimental post‑processing (see below)
+Environment
+- `CUE4PARSE_SKIP_NATIVE=1` skips native helpers (default in our build scripts). Recommended for portability.
+- `HEADLESS_ENABLE_PP=1` enables optional post‑processing defined in scene JSON.
 
 ## Scene JSON (overview)
 
@@ -117,6 +126,8 @@ The root command is `FModelHeadless` (invoked via `dotnet run` in the scripts). 
 - `variants`  Variant & overlay helpers
 - `search`  Search mounted virtual paths
 - `export` Export various assets
+
+Tip: append `--help` to any command or subcommand (e.g., `render --help`, `export --help`) to list all available options and usage.
 
 Examples
 ```bash
