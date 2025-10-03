@@ -254,14 +254,15 @@ internal static class ExportCommandFactory
                             if (dummy is not (USoundWave or UAkMediaAssetData)) continue;
 
                             var exportObj = ptr.Object.Value;
-                            SoundDecoder.Decode(exportObj, decompress, out var format, out var data);
-                            if (data == null || string.IsNullOrWhiteSpace(format)) continue;
+                        SoundDecoder.Decode(exportObj, decompress, out var format, out var data);
+                        if (data == null || string.IsNullOrWhiteSpace(format)) continue;
 
-                            var name = exportObj.Name;
-                            var outFolder = Path.Combine(outDir.FullName, folder);
-                            Directory.CreateDirectory(outFolder);
-                            var path = Path.Combine(outFolder, $"{name}.{format.ToLowerInvariant()}");
-                            File.WriteAllBytes(path, data);
+                        var name = exportObj.Name;
+                        var outFolder = Path.Combine(outDir.FullName, folder);
+                        Directory.CreateDirectory(outFolder);
+                        var ext = NormalizeAudioExtension(format);
+                        var path = Path.Combine(outFolder, $"{name}.{ext}");
+                        File.WriteAllBytes(path, data);
 
                             System.Threading.Interlocked.Increment(ref exported);
                             if (verbose)
@@ -286,5 +287,19 @@ internal static class ExportCommandFactory
         });
 
         return cmd;
+    }
+
+    private static string NormalizeAudioExtension(string audioFormat)
+    {
+        if (string.IsNullOrWhiteSpace(audioFormat)) return "bin";
+        var f = audioFormat.ToLowerInvariant();
+        if (f.Contains("ogg")) return "ogg";
+        if (f.Contains("wem")) return "wem";
+        if (f.Contains("opus")) return "opus";
+        if (f.Contains("binka")) return "binka";
+        if (f.Contains("adpcm")) return "wav"; // packed ADPCM in RIFF/WAV
+        if (f.Contains("pcm")) return "wav";
+        if (f == "wav") return "wav";
+        return f.Length <= 4 ? f : "bin";
     }
 }
